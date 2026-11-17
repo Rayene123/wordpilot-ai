@@ -146,12 +146,15 @@ def test_langchain_provider_uses_structured_output_and_wraps_failures():
         "temperature": 0, "validate_model_on_init": False,
         "client_kwargs": {"timeout": 30.0},
     }),
-    ("openai", "langchain_openai", "ChatOpenAI", {"OPENAI_API_KEY": "test-key"}, {
-        "model": "gpt-4o-mini", "api_key": "test-key", "timeout": 30.0,
-        "max_retries": 0,
+    ("groq", "langchain_groq", "ChatGroq", {"GROQ_API_KEY": "test-groq-key", "GROQ_MODEL": "openai/gpt-oss-120b"}, {
+        "model": "openai/gpt-oss-120b", "api_key": "test-groq-key", "temperature": 0,
+        "timeout": 30.0, "max_retries": 0,
     }),
 ])
 def test_provider_selection_and_model_configuration(monkeypatch, provider, module, class_name, env, expected):
+    import backend.agent.provider as provider_module
+
+    monkeypatch.setattr(provider_module, "load_dotenv", lambda **kwargs: False)
     calls = []
 
     class FakeChat:
@@ -162,7 +165,7 @@ def test_provider_selection_and_model_configuration(monkeypatch, provider, modul
         **sys.modules, module: SimpleNamespace(**{class_name: FakeChat}),
     })
     for key in ("WORDPILOT_LLM_PROVIDER", "WORDPILOT_LLM_MODEL", "WORDPILOT_OLLAMA_BASE_URL",
-                "WORDPILOT_LLM_TIMEOUT_SECONDS", "OPENAI_API_KEY"):
+                "WORDPILOT_LLM_TIMEOUT_SECONDS", "GROQ_API_KEY", "GROQ_MODEL"):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("WORDPILOT_LLM_PROVIDER", provider)
     for key, value in env.items():
@@ -189,11 +192,27 @@ def test_ollama_explicit_model_and_base_url(monkeypatch):
     assert calls[0]["base_url"] == "http://127.0.0.1:11434"
 
 
+def test_provider_model_settings_do_not_leak(monkeypatch):
+    import backend.agent.provider as provider_module
+
+    monkeypatch.setattr(provider_module, "load_dotenv", lambda **kwargs: False)
+    monkeypatch.setenv("WORDPILOT_LLM_MODEL", "qwen2.5:7b")
+    monkeypatch.setenv("GROQ_MODEL", "openai/gpt-oss-120b")
+    monkeypatch.setenv("WORDPILOT_LLM_PROVIDER", "groq")
+    assert provider_module.get_planning_configuration() == ("groq", "openai/gpt-oss-120b")
+    monkeypatch.setenv("WORDPILOT_LLM_PROVIDER", "ollama")
+    assert provider_module.get_planning_configuration() == ("ollama", "qwen2.5:7b")
+
+
 @pytest.mark.parametrize(("provider", "key", "value", "message"), [
-    ("openai", "OPENAI_API_KEY", None, "OPENAI_API_KEY is required"),
+    ("unknown", None, None, "Unknown WORDPILOT_LLM_PROVIDER"),
+    ("groq", "GROQ_API_KEY", None, "GROQ_API_KEY is required"),
     ("remote", None, None, "Unknown WORDPILOT_LLM_PROVIDER"),
 ])
 def test_invalid_provider_configuration_fails_without_fallback(monkeypatch, provider, key, value, message):
+    import backend.agent.provider as provider_module
+
+    monkeypatch.setattr(provider_module, "load_dotenv", lambda **kwargs: False)
     monkeypatch.setenv("WORDPILOT_LLM_PROVIDER", provider)
     if key:
         monkeypatch.delenv(key, raising=False)
@@ -201,7 +220,7 @@ def test_invalid_provider_configuration_fails_without_fallback(monkeypatch, prov
         create_planning_provider()
 
 
-def test_ollama_connection_error_does_not_fall_back_to_openai(monkeypatch):
+def test_ollama_connection_error_does_not_fall_back_to_groq(monkeypatch):
     class BrokenOllama:
         def with_structured_output(self, schema):
             return self
@@ -223,3 +242,38 @@ def test_ollama_timeout_is_normalized_without_fallback():
 
     with pytest.raises(PlanningProviderError, match="timed out"):
         LangChainPlanningProvider(BrokenOllama()).generate([HumanMessage(content="x")], PlanningResult)
+
+
+def test_groq_uses_json_schema_output_and_rejects_invalid_operation(monkeypatch):
+    import backend.agent.provider as provider_module
+
+    monkeypatch.setattr(provider_module, "load_dotenv", lambda **kwargs: False)
+    captured = {}
+
+    class FakeGroq:
+        def __init__(self, **kwargs):
+            captured["config"] = kwargs
+
+        def with_structured_output(self, schema, **options):
+            captured["schema"] = schema
+            captured["options"] = options
+            return self
+
+        def invoke(self, messages):
+            return {"status": "proposed", "message": "Invalid.", "operations": [
+                {"operation_type": "run_python", "code": "not allowed"},
+            ]}
+
+    monkeypatch.setattr(sys, "modules", {
+        **sys.modules, "langchain_groq": SimpleNamespace(ChatGroq=FakeGroq),
+    })
+    monkeypatch.setenv("WORDPILOT_LLM_PROVIDER", "groq")
+    monkeypatch.setenv("GROQ_API_KEY", "test-groq-key")
+    monkeypatch.delenv("WORDPILOT_LLM_MODEL", raising=False)
+
+    with pytest.raises(PlanningError, match="invalid planning output"):
+        OperationPlanner(create_planning_provider()).plan("Do something", SUMMARY)
+
+    assert captured["schema"] is PlanningResult
+    assert captured["options"] == {"method": "json_schema", "strict": False}
+    assert captured["config"]["model"] == "openai/gpt-oss-120b"

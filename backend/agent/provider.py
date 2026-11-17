@@ -6,11 +6,12 @@ import os
 from typing import Any, Protocol
 
 from langchain_core.messages import BaseMessage
+from dotenv import load_dotenv
 from pydantic import BaseModel
 
 
 class StructuredModel(Protocol):
-    def with_structured_output(self, schema: type[BaseModel]) -> Any:
+    def with_structured_output(self, schema: type[BaseModel], **options: Any) -> Any:
         """Return a model wrapper that asks the provider for this Pydantic shape."""
         ...
 
@@ -19,12 +20,24 @@ class PlanningProviderError(RuntimeError):
     """Provider configuration, transport, or response failure."""
 
 
+def get_planning_configuration() -> tuple[str, str]:
+    """Return the selected provider and its provider-specific model setting."""
+    load_dotenv(override=False)
+    provider_name = os.getenv("WORDPILOT_LLM_PROVIDER", "ollama").strip().lower()
+    if provider_name == "groq":
+        return provider_name, os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+    if provider_name == "ollama":
+        return provider_name, os.getenv("WORDPILOT_LLM_MODEL", "qwen2.5:7b")
+    return provider_name, "unknown"
+
+
 class LangChainPlanningProvider:
     """Invoke a LangChain chat model with a Pydantic structured-output schema."""
 
-    def __init__(self, model: StructuredModel):
+    def __init__(self, model: StructuredModel, *, structured_output_options: dict[str, Any] | None = None):
         """Keep the configured chat model; no network request happens here."""
         self._model = model
+        self._structured_output_options = structured_output_options or {}
 
     def generate(self, messages: list[BaseMessage], schema: type[BaseModel]) -> Any:
         """Send messages through structured output and normalize provider errors.
@@ -33,7 +46,9 @@ class LangChainPlanningProvider:
         local Pydantic validation before treating it as an operation proposal.
         """
         try:
-            return self._model.with_structured_output(schema).invoke(messages)
+            return self._model.with_structured_output(
+                schema, **self._structured_output_options,
+            ).invoke(messages)
         except Exception as exc:
             # Provider exception text can contain request fragments. Keep the
             # user-facing error useful without exposing prompts or document text.
@@ -44,10 +59,12 @@ class LangChainPlanningProvider:
 def create_planning_provider() -> LangChainPlanningProvider:
     """Create the explicitly selected LangChain planning model.
 
-    Ollama is the privacy-preserving default. OpenAI is used only when selected
-    explicitly through WORDPILOT_LLM_PROVIDER=openai.
+    Ollama is the local default. Groq is used only when explicitly selected
+    through WORDPILOT_LLM_PROVIDER=groq.
     """
-    provider_name = os.getenv("WORDPILOT_LLM_PROVIDER", "ollama").strip().lower()
+    # Keep existing process environment values authoritative while supporting
+    # project-local .env configuration for development and benchmark runs.
+    provider_name, model_name = get_planning_configuration()
     try:
         timeout = float(os.getenv("WORDPILOT_LLM_TIMEOUT_SECONDS", "30"))
         if timeout <= 0:
@@ -55,7 +72,6 @@ def create_planning_provider() -> LangChainPlanningProvider:
         if provider_name == "ollama":
             from langchain_ollama import ChatOllama
 
-            model_name = os.getenv("WORDPILOT_LLM_MODEL", "qwen2.5:7b")
             return LangChainPlanningProvider(ChatOllama(
                 model=model_name,
                 base_url=os.getenv("WORDPILOT_OLLAMA_BASE_URL", "http://localhost:11434"),
@@ -63,21 +79,24 @@ def create_planning_provider() -> LangChainPlanningProvider:
                 validate_model_on_init=False,
                 client_kwargs={"timeout": timeout},
             ))
-        if provider_name == "openai":
-            api_key = os.getenv("OPENAI_API_KEY")
+        if provider_name == "groq":
+            api_key = os.getenv("GROQ_API_KEY")
             if not api_key:
-                raise PlanningProviderError("OPENAI_API_KEY is required when WORDPILOT_LLM_PROVIDER=openai.")
-            from langchain_openai import ChatOpenAI
+                raise PlanningProviderError("GROQ_API_KEY is required when WORDPILOT_LLM_PROVIDER=groq.")
+            from langchain_groq import ChatGroq
 
-            model_name = os.getenv("WORDPILOT_LLM_MODEL", "gpt-4o-mini")
-            return LangChainPlanningProvider(ChatOpenAI(
-                model=model_name,
-                api_key=api_key,
-                timeout=timeout,
-                max_retries=0,
-            ))
+            return LangChainPlanningProvider(
+                ChatGroq(
+                    model=model_name,
+                    api_key=api_key,
+                    temperature=0,
+                    timeout=timeout,
+                    max_retries=0,
+                ),
+                structured_output_options={"method": "json_schema", "strict": False},
+            )
         raise PlanningProviderError(
-            "Unknown WORDPILOT_LLM_PROVIDER. Choose 'ollama' or 'openai'."
+            "Unknown WORDPILOT_LLM_PROVIDER. Choose 'ollama' or 'groq'."
         )
     except PlanningProviderError:
         raise
