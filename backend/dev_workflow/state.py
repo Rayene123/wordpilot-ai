@@ -20,3 +20,8 @@ class DevWorkflowState(TypedDict):
     proposal_fingerprint: NotRequired[str | None]
     approval: NotRequired[dict[str, Any] | None]
     execution_result: NotRequired[dict[str, Any] | None]
+    analysis_evidence: NotRequired[dict[str, Any] | None]
+    validation_errors: NotRequired[list[str]]
+    final_status: NotRequired[Literal[
+        "pending", "awaiting_approval", "approved", "rejected", "failed",
+    ]]

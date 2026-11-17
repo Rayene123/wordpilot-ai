@@ -6,7 +6,7 @@ These instructions supplement the repository and backend instructions for code u
 
 - DevFlow is the optional software-development orchestrator. It is separate from WordPilot's DOCX editing product.
 - Never import `backend/agent/provider.py` or use the document product's Groq/Ollama providers for DevFlow. Codex CLI is DevFlow's AI interface.
-- The current foundation contains Pydantic schemas, serializable workflow state, and a read-only Codex CLI analysis adapter. Do not claim a graph, approval UI, worktree manager, implementation stage, verification pipeline, review stage, or repair loop exists unless it has been added and verified.
+- The current code includes Pydantic schemas, serializable workflow state, a read-only Codex CLI analysis adapter, and a LangGraph analysis/validation/approval flow. Run its focused tests before making claims about runtime behavior. An approval UI, worktree manager, implementation stage, verification pipeline, review stage, and repair loop are not part of the current workflow.
 - Codex CLI integration does not control the existing Codex GUI or IDE conversation.
 
 ## Codex CLI and approval boundary

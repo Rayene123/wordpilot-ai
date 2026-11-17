@@ -8,7 +8,7 @@ The document-editing workflow is in `backend/agent/`, `backend/docx_editor/`, an
 
 The frontend is in `frontend/` and uses the Next.js App Router. Its API client is in `frontend/src/lib/`. Follow the more specific instructions in `frontend/AGENTS.md` when changing frontend files.
 
-The optional Codex-based development workflow is a separate project feature under `backend/dev_workflow/`. Its current foundation contains schemas, serializable state, and a read-only Codex CLI analysis adapter. Follow `backend/dev_workflow/AGENTS.md` for all work there. Do not describe planned stages as implemented.
+The optional Codex-based development workflow is a separate project feature under `backend/dev_workflow/`. It has schemas, serializable state, a read-only Codex CLI analysis adapter, and an analysis/validation/human-approval graph. Implementation, worktree management, verification, review, and repair are later stages. Follow `backend/dev_workflow/AGENTS.md` for all work there, and do not describe later stages as implemented.
 
 ## General coding conventions
 
