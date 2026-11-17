@@ -5,8 +5,12 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
+import os
+import re
 import secrets
 import threading
+import traceback
 from pathlib import Path
 from typing import Any, Literal, Mapping
 
@@ -14,15 +18,28 @@ from pydantic import TypeAdapter, ValidationError
 
 from backend.docx_editor.integrity import IntegrityCheck, IntegrityReport, verify_document_integrity
 
-from .graph import _execute_node, _parse_tool_result
-from .planner import OperationPlanner, PlanningError, PlanningModel
+from backend.docx_editor.inspection import inspect_document_with_planner_context
+
+from .graph import _execute_node
+from .planner import OperationPlanner, PlanningContextTooLarge, PlanningModel
 from .schemas import DocumentOperation
-from .tools import create_document_tools
 
 _OPERATIONS = TypeAdapter(list[DocumentOperation])
 _PROPOSAL_VERSION = 1
 _PROPOSALS: dict[str, str] = {}
 _PROPOSALS_LOCK = threading.Lock()
+_logger = logging.getLogger(__name__)
+
+
+def _safe_error_message(exc: Exception) -> str:
+    """Redact credentials from exception messages before writing server logs."""
+    message = str(exc)
+    api_key = os.getenv("GROQ_API_KEY")
+    if api_key:
+        message = message.replace(api_key, "[REDACTED]")
+    message = re.sub(r"(?i)(authorization\s*[:=]\s*(?:bearer\s+)?)[^\s,;]+", r"\1[REDACTED]", message)
+    message = re.sub(r"(?i)((?:api[_-]?key|token|secret)\s*[:=]\s*)[^\s,;]+", r"\1[REDACTED]", message)
+    return message
 
 
 def plan_document(
@@ -42,12 +59,17 @@ def plan_document(
     try:
         source = Path(document_path).expanduser().resolve()
         source_fingerprint = _file_fingerprint(source)
-        tools = {tool.name: tool for tool in create_document_tools(source)}
-        summary = _parse_tool_result(tools["inspect_document"].invoke({}))
+        inspected, planner_context = inspect_document_with_planner_context(source)
+        # Match the JSON-normalized shape previously returned by the inspect tool.
+        summary = json.loads(json.dumps(inspected.to_dict(), ensure_ascii=False))
         if _file_fingerprint(source) != source_fingerprint:
             raise ValueError("Source document changed while it was being inspected; please plan again.")
         active_planner = planner or OperationPlanner(provider)
-        planned = active_planner.plan(instruction, summary)
+        if planner is not None and not isinstance(planner, OperationPlanner):
+            # Preserve the existing injectable planner interface for hosts/tests.
+            planned = active_planner.plan(instruction, summary)
+        else:
+            planned = active_planner.plan(instruction, summary, planner_context=planner_context)
         if planned.status == "clarification_required":
             return _planning_result("needs_clarification", source, instruction, summary,
                                     [], planned.message)
@@ -61,7 +83,31 @@ def plan_document(
         proposal["source_fingerprint"] = source_fingerprint
         proposal["proposal_digest"] = _register_proposal(proposal)
         return proposal
+    except PlanningContextTooLarge as exc:
+        return {
+            "planning_status": "too_large",
+            "approval_status": "pending",
+            "execution_status": "not_executed",
+            "document_path": str(document_path),
+            "user_instruction": instruction,
+            "document_summary": None,
+            "proposed_operations": [],
+            "validated_operations": [],
+            "approved_operations": [],
+            "clarification_request": None,
+            "execution_results": [],
+            "warnings": [],
+            "errors": [str(exc)],
+            "output_path": None,
+            "final_response": str(exc),
+        }
     except Exception as exc:
+        _logger.error(
+            "Document planning failed: type=%s message=%s\n%s",
+            type(exc).__name__,
+            _safe_error_message(exc),
+            "".join(traceback.format_tb(exc.__traceback__)),
+        )
         return {
             "planning_status": "failed",
             "approval_status": "pending",
@@ -309,7 +355,9 @@ def _proposal_is_unchanged(proposal: Mapping[str, Any], token: str) -> bool:
         return False
     with _PROPOSALS_LOCK:
         original = _PROPOSALS.get(token)
-    return original is not None and hmac.compare_digest(candidate, original)
+    return original is not None and hmac.compare_digest(
+        candidate.encode("utf-8"), original.encode("utf-8"),
+    )
 
 
 def _canonical_proposal(proposal: Mapping[str, Any]) -> str:

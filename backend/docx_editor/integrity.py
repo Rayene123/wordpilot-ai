@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Literal, Mapping
 from xml.etree import ElementTree
 
+from lxml import etree
 from docx import Document
 from docx.document import Document as DocumentObject
 from docx.oxml.ns import qn
@@ -584,7 +585,7 @@ def _xml_signature(element: Any | None) -> str:
     """Serialize an OOXML element deterministically for supported-property comparison."""
     if element is None:
         return ""
-    return element.xml
+    return etree.tostring(element, encoding="unicode", pretty_print=True)
 
 
 def _compare_table_properties(
@@ -623,9 +624,11 @@ def _compare_packages(original: dict[str, str], edited: dict[str, str]) -> list[
 def _find_unverified_features(names: set[str], path: Path) -> list[str]:
     """Identify known Word feature families outside the structural comparison scope."""
     features: list[str] = []
+    # Header/footer parts and their relationships are already compared byte for
+    # byte by _compare_packages; section references are checked separately.
+    # Since the editor only changes body content, their semantics do not need
+    # a separate partial-verification downgrade when those package parts match.
     package_prefixes = {
-        "word/header": "headers",
-        "word/footer": "footers",
         "word/footnotes": "footnotes",
         "word/endnotes": "endnotes",
         "word/comments": "comments",

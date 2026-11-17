@@ -8,9 +8,10 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches
 from docx.shared import RGBColor
+from lxml import etree
 import pytest
 
-from backend.docx_editor.integrity import verify_document_integrity
+from backend.docx_editor.integrity import _xml_signature, verify_document_integrity
 from backend.docx_editor import insert_paragraph, remove_paragraph, replace_text
 from backend.agent.schemas import ReplaceOperation as AgentReplaceOperation
 from backend.operation_schemas import ReplaceOperation
@@ -18,6 +19,15 @@ from backend.operation_schemas import ReplaceOperation
 
 def _verify(source, edited, operations=()):
     return verify_document_integrity(source, edited, list(operations))
+
+
+def test_xml_signature_supports_plain_lxml_elements():
+    element = etree.fromstring(b'<w:sectPr xmlns:w="urn:test"><w:pgSz w:w="12240"/></w:sectPr>')
+
+    signature = _xml_signature(element)
+
+    assert "sectPr" in signature
+    assert "pgSz" in signature
 
 
 def test_unchanged_document_passes(make_docx, tmp_path):
@@ -602,18 +612,21 @@ def test_expected_operations_in_nested_table_use_flat_table_locations(make_docx,
     assert report.status == "passed"
 
 
-def test_header_feature_is_partially_verified(make_docx, tmp_path):
+def test_unchanged_headers_and_footers_do_not_downgrade_body_edit(make_docx, tmp_path):
     source = make_docx()
     doc = Document(source)
-    doc.sections[0].header.paragraphs[0].text = "Header feature"
+    doc.sections[0].header.paragraphs[0].text = "Header content is preserved"
+    doc.sections[0].footer.paragraphs[0].text = "Footer content is preserved"
     doc.save(source)
-    edited = tmp_path / "header-copy.docx"
-    shutil.copyfile(source, edited)
+    edited = tmp_path / "header-footer-copy.docx"
+    replace_text(source, "Unrelated", "Changed", edited)
 
-    report = _verify(source, edited)
+    report = _verify(source, edited, [{
+        "operation_type": "replace", "target_text": "Unrelated", "replacement_text": "Changed",
+    }])
 
-    assert report.status == "partially_verified"
-    assert any("headers" in item for item in report.unverified_features)
+    assert report.status == "passed"
+    assert not any("headers" in item or "footers" in item for item in report.unverified_features)
 
 
 def test_invalid_approved_operation_returns_structured_failure(make_docx, tmp_path):

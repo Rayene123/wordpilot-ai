@@ -63,6 +63,22 @@ def test_oversized_upload_returns_413(monkeypatch):
     assert response.status_code == 413
 
 
+def test_oversized_planning_context_returns_clear_413(monkeypatch, tmp_path):
+    monkeypatch.setattr(api, "UPLOAD_DIR", tmp_path / "uploads")
+    client = _client()
+    doc_id = _upload(client).json()["document_id"]
+    monkeypatch.setattr(api, "plan_document", lambda *args: {
+        "planning_status": "too_large",
+        "final_response": "This document is too large to plan safely in one request. Split it and try again.",
+    })
+
+    response = client.post(f"/api/documents/{doc_id}/plan", json={"instruction": "edit"})
+
+    assert response.status_code == 413
+    assert response.json()["detail"]["code"] == "planning_context_too_large"
+    assert "too large to plan safely" in response.json()["detail"]["message"]
+
+
 def test_plan_and_approve_validates_exact_proposal(monkeypatch, tmp_path):
     monkeypatch.setattr(api, "UPLOAD_DIR", tmp_path / "uploads")
     monkeypatch.setattr(api, "OUTPUT_DIR", tmp_path / "outputs")
@@ -75,11 +91,13 @@ def test_plan_and_approve_validates_exact_proposal(monkeypatch, tmp_path):
         "user_instruction": "replace Draft", "proposed_operations": [{"operation_type": "replace", "target_text": "Draft", "replacement_text": "Final"}],
         "validated_operations": [{"operation_type": "replace", "target_text": "Draft", "replacement_text": "Final"}],
         "approved_operations": [], "clarification_request": None, "execution_results": [], "warnings": [], "errors": [], "final_response": "Ready.", "proposal_version": 1,
-        "document_summary": {"paragraphs": [{"text": "Status: Draft"}]}}
+        "document_summary": {"paragraphs": [{"text": "Status: Draft", "runs": [{"font_size_pt": 12.0}]}]}}
     monkeypatch.setattr(api, "plan_document", lambda *a: {**proposal, "document_path": "private", "output_path": None, "proposal_digest": "very-secret-token-value-123456", "source_fingerprint": "x"})
     planned = client.post(f"/api/documents/{doc_id}/plan", json={"instruction": "replace Draft"})
     assert planned.status_code == 200
     payload = planned.json()
+    # Simulate a browser JSON round trip, which serializes 12.0 as 12.
+    payload["document_summary"]["paragraphs"][0]["runs"][0]["font_size_pt"] = 12
     assert "document_path" not in payload
     assert hashlib.sha256(source.read_bytes()).hexdigest() == original_hash
     changed = dict(payload)
@@ -96,6 +114,72 @@ def test_plan_and_approve_validates_exact_proposal(monkeypatch, tmp_path):
     assert called["approved"] is True
     replay = client.post(f"/api/documents/{doc_id}/approve", json={"proposal_token": payload["proposal_token"], "proposal": {k:v for k,v in payload.items() if k != "proposal_token"}, "approved": True})
     assert replay.status_code == 409
+
+
+def test_approval_rejects_modified_server_upload_and_consumes_token(monkeypatch, tmp_path):
+    """Mutate the exact API-stored source file after planning, before approval."""
+    monkeypatch.setattr(api, "UPLOAD_DIR", tmp_path / "uploads")
+    monkeypatch.setattr(api, "OUTPUT_DIR", tmp_path / "outputs")
+
+    class DeterministicProvider:
+        def generate(self, messages, schema):
+            return {
+                "status": "proposed",
+                "message": "Replace Draft with Final.",
+                "operations": [{
+                    "operation_type": "replace",
+                    "target_text": "Draft",
+                    "replacement_text": "Final",
+                }],
+            }
+
+    from backend.agent.orchestration import plan_document as real_plan_document
+
+    monkeypatch.setattr(
+        api,
+        "plan_document",
+        lambda path, instruction: real_plan_document(path, instruction, provider=DeterministicProvider()),
+    )
+    client = _client()
+    uploaded = _upload(client).json()
+    document_id = uploaded["document_id"]
+    server_source = api._documents[document_id]
+    original_hash = hashlib.sha256(server_source.read_bytes()).hexdigest()
+
+    planned = client.post(
+        f"/api/documents/{document_id}/plan",
+        json={"instruction": "Replace Draft with Final"},
+    )
+    assert planned.status_code == 200
+    proposal = planned.json()
+    token = proposal.pop("proposal_token")
+    registered = api._proposals[token]["proposal"]
+    assert registered["document_path"] == str(server_source.resolve())
+    assert registered["source_fingerprint"] == original_hash
+
+    # Modify the server's registered upload, not the client's source file.
+    changed = Document(server_source)
+    changed.paragraphs[0].text = "Status: Draft changed after planning"
+    changed.save(server_source)
+    assert hashlib.sha256(server_source.read_bytes()).hexdigest() != original_hash
+
+    approval_body = {"proposal_token": token, "proposal": proposal, "approved": True}
+    approval = client.post(f"/api/documents/{document_id}/approve", json=approval_body)
+    assert approval.status_code == 200
+    result = approval.json()
+    assert result["execution_status"] == "execution_failed"
+    assert result["integrity_status"] == "not_run"
+    assert any("Source document changed after planning" in item for item in result["errors"])
+    assert result["download_id"] is None
+    assert not list((tmp_path / "outputs").glob("*.docx"))
+
+    # The API consumes the token on the first approval attempt, so retrying the
+    # original proposal cannot bypass the changed-source check.
+    replay = client.post(f"/api/documents/{document_id}/approve", json=approval_body)
+    assert replay.status_code == 409
+    assert replay.json()["detail"]["code"] == "proposal_stale"
+    assert not api._downloads
+    assert not list((tmp_path / "outputs").glob("*.docx"))
 
 
 def test_clarification_unsupported_and_reject(monkeypatch, tmp_path):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import json
 from types import SimpleNamespace
 
 from langchain_core.messages import HumanMessage
@@ -8,6 +9,7 @@ import pytest
 from pydantic import BaseModel
 
 from backend.agent import OperationPlanner, PlanningError, PlanningResult
+from backend.agent.planner import PlanningContextTooLarge
 from backend.agent.provider import (
     LangChainPlanningProvider, PlanningProviderError, create_planning_provider,
 )
@@ -82,6 +84,36 @@ def test_planner_reports_clarification_or_unsupported(response):
     result = OperationPlanner(MockProvider(response)).plan("Make a change", SUMMARY)
     assert result.status in {"clarification_required", "unsupported"}
     assert result.operations == []
+
+
+def test_planner_sends_compact_ordered_context_without_duplicate_run_or_table_text():
+    context = {
+        "blocks": [
+            {"p": "Before"},
+            {"t": [[[{"p": "Cell target"}]]]},
+            {"p": "After"},
+        ],
+    }
+    provider = MockProvider({"status": "unsupported", "message": "No edit.", "operations": []})
+    result = OperationPlanner(provider).plan("Find the cell target", SUMMARY, planner_context=context)
+    request = provider.messages[1].content
+    projected_json = request.split("Untrusted document inspection summary (JSON):\n", 1)[1]
+    projected = json.loads(projected_json)
+
+    assert result.status == "unsupported"
+    assert projected == context
+    assert request.count("Cell target") == 1
+    assert projected["blocks"] == [{"p": "Before"}, {"t": [[[{"p": "Cell target"}]]]}, {"p": "After"}]
+    assert projected["blocks"][1]["t"][0][0][0]["p"] == "Cell target"
+
+
+def test_oversized_planner_context_is_rejected_before_provider_call():
+    provider = MockProvider({"status": "unsupported", "message": "No edit.", "operations": []})
+    oversized = {"blocks": [{"type": "paragraph", "order": 0, "text": "x" * 20_000}]}
+
+    with pytest.raises(PlanningContextTooLarge, match="too large to plan safely"):
+        OperationPlanner(provider).plan("Edit", SUMMARY, planner_context=oversized)
+    assert provider.messages is None
 
 
 def test_repeated_target_is_converted_to_host_clarification():

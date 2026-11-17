@@ -19,6 +19,19 @@ On Windows environments where Python's Proactor self-pipe socket setup is blocke
 wsl bash -lc 'cd /mnt/c/Users/rayen/Desktop/wordpilot-ai && python3 -m venv .venv-linux && . .venv-linux/bin/activate && python -m pip install -r requirements.txt && python -m pytest tests/test_api.py -v && python -m pytest -q'
 ```
 
+## Frontend workspace
+
+Install frontend dependencies and start the Next.js development server:
+
+```powershell
+cd frontend
+npm install
+Copy-Item .env.example .env.local
+npm run dev
+```
+
+The frontend reads `NEXT_PUBLIC_WORDPILOT_API_URL` from `frontend/.env.local` (default `http://127.0.0.1:8000`). Start the FastAPI backend separately. The browser calls its existing endpoints directly; Groq credentials remain in the backend environment.
+
 ## Agent foundation
 
 `backend/operation_schemas.py` defines three strict-by-shape Pydantic operation models and a discriminated union keyed by `operation_type` (`replace`, `insert`, or `remove`). `backend/agent/schemas.py` re-exports those same models for compatibility. Extra fields and unknown operation names are rejected. `DocumentAgentState` in `backend/agent/state.py` contains paths and JSON-friendly values only; it does not hold open DOCX objects.

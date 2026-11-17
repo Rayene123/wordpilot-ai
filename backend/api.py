@@ -71,6 +71,25 @@ def _public_proposal(proposal: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in proposal.items() if k not in {"document_path", "output_path", "proposal_digest", "source_fingerprint"}}
 
 
+def _canonical_proposal_json(value: Any) -> str:
+    """Canonicalize JSON values independent of integral float spelling.
+
+    Browsers parse JSON numbers as JavaScript ``number`` and may serialize
+    ``12.0`` back as ``12``. Those values are numerically identical and should
+    not make an otherwise unchanged proposal appear modified.
+    """
+    def normalize(item: Any) -> Any:
+        if isinstance(item, float) and item.is_integer():
+            return int(item)
+        if isinstance(item, dict):
+            return {key: normalize(child) for key, child in item.items()}
+        if isinstance(item, (list, tuple)):
+            return [normalize(child) for child in item]
+        return item
+
+    return json.dumps(normalize(value), sort_keys=True, separators=(",", ":"))
+
+
 def _redact_local_paths(value: Any) -> Any:
     """Avoid returning machine-specific paths embedded in execution messages."""
     if isinstance(value, str):
@@ -134,6 +153,11 @@ async def upload_document(file: UploadFile = File(...)) -> dict[str, Any]:
 def plan(document_id: str, request: PlanRequest) -> dict[str, Any]:
     path = _doc(document_id)
     result = plan_document(path, request.instruction)
+    if result.get("planning_status") == "too_large":
+        _fail(413, "planning_context_too_large", result.get(
+            "final_response",
+            "This document is too large to plan safely in one request. Split it into smaller documents and try again.",
+        ))
     if result.get("planning_status") == "failed":
         _fail(502, "planning_failed", "The planner could not produce a proposal.")
     if result.get("planning_status") == "awaiting_approval":
@@ -156,8 +180,7 @@ def approve(document_id: str, request: ApprovalRequest) -> dict[str, Any]:
         if not entry or entry["document_id"] != document_id or entry["state"] != "pending":
             _fail(409, "proposal_stale", "Proposal is unknown, stale, or already used.")
         expected = _public_proposal(entry["proposal"])
-        canonical = lambda value: json.dumps(value, sort_keys=True, separators=(",", ":"))
-        if not hmac.compare_digest(canonical(expected), canonical(request.proposal)):
+        if not hmac.compare_digest(_canonical_proposal_json(expected), _canonical_proposal_json(request.proposal)):
             _fail(409, "proposal_modified", "Proposal content does not match the generated proposal.")
         entry["state"] = "consumed"
         proposal = entry["proposal"]

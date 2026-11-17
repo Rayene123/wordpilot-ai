@@ -96,11 +96,36 @@ def _paragraph_info(paragraph: Paragraph) -> ParagraphInfo:
     )
 
 
-def inspect_document(path: str | Path) -> DocumentSummary:
-    """Inspect an existing DOCX without writing to it.
+def _planner_blocks(parent: DocumentObject | _Cell) -> list[dict[str, Any]]:
+    """Return ordered paragraph/table blocks without duplicating run text.
 
-    Raises ``FileNotFoundError``, ``IsADirectoryError`` or ``ValueError`` for
-    invalid paths and documents that python-docx cannot open.
+    Paragraph strings appear once in this projection. Table rows and cells are
+    retained as containers, so the planner can distinguish identical anchors
+    by document order and location.
+    """
+    result: list[dict[str, Any]] = []
+    for block in _iter_blocks(parent):
+        if isinstance(block, Paragraph):
+            # Sequence position plus enclosing table/row/cell list positions
+            # retain ordering and provide an unambiguous structural anchor.
+            result.append({"p": block.text})
+            continue
+
+        rows = [
+            [_planner_blocks(cell) for cell in row.cells]
+            for row in block.rows
+        ]
+        result.append({"t": rows})
+    return result
+
+
+def inspect_document_with_planner_context(
+    path: str | Path,
+) -> tuple[DocumentSummary, dict[str, Any]]:
+    """Inspect once and return the unchanged full summary plus compact structure.
+
+    The planner projection keeps document block order and table/cell nesting,
+    while omitting run formatting and the duplicate table text representation.
     """
     source = Path(path)
     if not source.exists():
@@ -120,10 +145,24 @@ def inspect_document(path: str | Path) -> DocumentSummary:
         ))
         for table in _tables(document)
     )
-    return DocumentSummary(
+    summary = DocumentSummary(
         paragraphs=paragraphs,
         tables=tables,
         paragraph_count=len(paragraphs),
         table_count=len(tables),
         inline_image_count=len(document.inline_shapes),
     )
+    return summary, {
+        "format": "ordered blocks: p=paragraph; t=table(rows>cells>blocks)",
+        "blocks": _planner_blocks(document),
+    }
+
+
+def inspect_document(path: str | Path) -> DocumentSummary:
+    """Inspect an existing DOCX without writing to it.
+
+    Raises ``FileNotFoundError``, ``IsADirectoryError`` or ``ValueError`` for
+    invalid paths and documents that python-docx cannot open.
+    """
+    summary, _ = inspect_document_with_planner_context(path)
+    return summary

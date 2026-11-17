@@ -7,6 +7,7 @@ import pytest
 
 from backend.docx_editor.integrity import IntegrityCheck, IntegrityReport
 from backend.agent import (
+    OperationPlanner,
     PlanningResult,
     execute_approved_proposal,
     plan_document,
@@ -53,6 +54,60 @@ def test_planning_returns_approval_proposal_without_output(make_docx, tmp_path):
     assert not list(tmp_path.glob("*_edited_*.docx"))
 
 
+def test_real_planner_gets_compact_context_while_proposal_keeps_full_inspection(make_docx):
+    import json
+
+    from backend.docx_editor import inspect_document
+
+    source = make_docx()
+
+    class CapturingProvider:
+        messages = None
+
+        def generate(self, messages, schema):
+            self.messages = messages
+            return {"status": "proposed", "message": "Replace the selected word.", "operations": [
+                {"operation_type": "replace", "target_text": "Unrelated", "replacement_text": "Updated"},
+            ]}
+
+    provider = CapturingProvider()
+    proposal = plan_document(source, "Review the document", provider=provider)
+    planner_text = provider.messages[1].content
+    compact_json = planner_text.split("Untrusted document inspection summary (JSON):\n", 1)[1]
+    compact = json.loads(compact_json)
+    full = json.loads(json.dumps(inspect_document(source).to_dict(), ensure_ascii=False))
+
+    assert proposal["planning_status"] == "awaiting_approval"
+    assert proposal["document_summary"] == full
+    assert "runs" in proposal["document_summary"]["paragraphs"][0]
+    assert "tables" in proposal["document_summary"]
+    assert "Cell target value" in json.dumps(compact)
+    assert planner_text.count("Cell target value") == 1
+    assert compact["blocks"][0] == {"p": "Keep old text end"}
+    assert compact["blocks"][1] == {"p": "Unrelated paragraph"}
+
+
+def test_exceptionally_large_document_returns_controlled_planning_status(make_docx):
+    source = make_docx()
+    document = Document(source)
+    document.add_paragraph("Large paragraph " + "content " * 3000)
+    document.save(source)
+
+    class NeverCalledProvider:
+        messages = None
+
+        def generate(self, messages, schema):
+            self.messages = messages
+            raise AssertionError("oversized context must be stopped before provider invocation")
+
+    provider = NeverCalledProvider()
+    result = plan_document(source, "Review this document", provider=provider)
+
+    assert result["planning_status"] == "too_large"
+    assert "too large to plan safely" in result["final_response"]
+    assert provider.messages is None
+
+
 def test_approval_executes_and_preserves_original(make_docx, tmp_path):
     source = make_docx()
     original = source.read_bytes()
@@ -68,6 +123,19 @@ def test_approval_executes_and_preserves_original(make_docx, tmp_path):
     assert Document(result["output_path"]).paragraphs[1].text == "Updated paragraph"
     assert source.read_bytes() == original
     assert result["output_path"] != str(source)
+
+
+def test_unicode_proposal_integrity_check_accepts_complex_document(make_docx, tmp_path):
+    source = make_docx()
+    document = Document(source)
+    document.add_paragraph("Résumé — café")
+    document.save(source)
+    proposal = plan_document(source, "Change Unrelated to Updated", planner=MockPlanner(_replace_result()))
+
+    result = execute_approved_proposal(proposal, approved=True, output_directory=tmp_path)
+
+    assert result["execution_status"] == "completed_verified"
+    assert Document(result["output_path"]).paragraphs[-1].text == "Résumé — café"
 
 
 def test_rejection_does_not_create_output(make_docx, tmp_path):

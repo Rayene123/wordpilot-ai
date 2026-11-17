@@ -5,6 +5,7 @@ from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 from backend.docx_editor import insert_paragraph, inspect_document, remove_paragraph, replace_text
+from backend.docx_editor.inspection import inspect_document_with_planner_context
 
 
 def test_single_run_replacement_and_saved_reopen(make_docx, tmp_path):
@@ -85,6 +86,23 @@ def test_inspection_reports_runs_styles_tables_and_images(make_docx):
     assert summary.table_count == 1
     assert summary.tables[0].rows[0][0] == ("Cell target value",)
     assert summary.inline_image_count == 1
+
+
+def test_planner_inspection_projection_preserves_order_and_cell_context(make_docx):
+    src = make_docx()
+    full_summary, context = inspect_document_with_planner_context(src)
+    full_after = inspect_document(src).to_dict()
+    import json
+    planner_json = json.dumps(context, ensure_ascii=False)
+
+    assert full_summary.to_dict() == full_after
+    assert planner_json.count("Keep old text end") == 1
+    assert planner_json.count("Unrelated paragraph") == 1
+    assert planner_json.count("Cell target value") == 1
+    blocks = context["blocks"]
+    assert blocks[0] == {"p": "Keep old text end"}
+    assert blocks[1] == {"p": "Unrelated paragraph"}
+    assert blocks[2]["t"][0][0][0] == {"p": "Cell target value"}
 
 
 def test_replaces_multiple_occurrences_in_one_paragraph(make_docx, tmp_path):

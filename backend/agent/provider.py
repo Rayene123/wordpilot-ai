@@ -3,11 +3,27 @@
 from __future__ import annotations
 
 import os
+import re
+import logging
+import traceback
 from typing import Any, Protocol
 
 from langchain_core.messages import BaseMessage
 from dotenv import load_dotenv
 from pydantic import BaseModel
+
+_logger = logging.getLogger(__name__)
+
+
+def _safe_provider_error(exc: Exception) -> str:
+    """Redact credentials and authorization material before logging provider errors."""
+    message = str(exc)
+    api_key = os.getenv("GROQ_API_KEY")
+    if api_key:
+        message = message.replace(api_key, "[REDACTED]")
+    message = re.sub(r"(?i)(authorization\s*[:=]\s*(?:bearer\s+)?)[^\s,;]+", r"\1[REDACTED]", message)
+    message = re.sub(r"(?i)((?:api[_-]?key|token|secret)\s*[:=]\s*)[^\s,;]+", r"\1[REDACTED]", message)
+    return message
 
 
 class StructuredModel(Protocol):
@@ -52,6 +68,12 @@ class LangChainPlanningProvider:
         except Exception as exc:
             # Provider exception text can contain request fragments. Keep the
             # user-facing error useful without exposing prompts or document text.
+            _logger.error(
+                "Planning provider invocation failed: type=%s message=%s\n%s",
+                type(exc).__name__,
+                _safe_provider_error(exc),
+                "".join(traceback.format_tb(exc.__traceback__)),
+            )
             kind = "timed out" if isinstance(exc, (TimeoutError,)) or "timeout" in type(exc).__name__.lower() else "connection or response error"
             raise PlanningProviderError(f"Structured model request failed ({kind}).") from None
 
@@ -101,4 +123,10 @@ def create_planning_provider() -> LangChainPlanningProvider:
     except PlanningProviderError:
         raise
     except Exception as exc:
+        _logger.error(
+            "Planning provider configuration failed: type=%s message=%s\n%s",
+            type(exc).__name__,
+            _safe_provider_error(exc),
+            "".join(traceback.format_tb(exc.__traceback__)),
+        )
         raise PlanningProviderError("Could not configure the selected planning model.") from None
