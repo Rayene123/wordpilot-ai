@@ -6,8 +6,11 @@ These instructions supplement the repository-level `AGENTS.md` for files under `
 
 - Target Python 3.11+ and the versions declared in `requirements.txt` (Pydantic 2, FastAPI, and LangGraph 1.x).
 - Use type hints, small functions, and Pydantic models for structured external or workflow data. Reject unexpected fields for security-sensitive payloads where compatible with existing interfaces.
+- Keep modules cohesive and dependencies one-way where practical: routes coordinate, domain modules implement behavior, and shared helpers stay small and domain-neutral. Avoid duplicate validation or parallel implementations of an existing operation.
 - Keep FastAPI route handlers thin. Put document and workflow behavior in the existing backend modules and preserve response compatibility unless the task explicitly changes it.
 - Keep filesystem paths and output directories selected and validated by host code.
+- Handle expected failures explicitly at API boundaries; do not return stack traces, provider credentials, local paths, or document text in client-facing errors or logs.
+- Bound external work with timeouts and output limits. Avoid blocking the async event loop with synchronous network or long-running process work.
 
 ## Document editing and integrity
 
@@ -21,7 +24,9 @@ These instructions supplement the repository-level `AGENTS.md` for files under `
 - Keep document-editing planning and execution in `backend/agent/`; keep DOCX operations in `backend/docx_editor/`.
 - Groq and Ollama are providers for WordPilot's document-editing product and are configured through `backend/agent/provider.py`. Do not silently change provider selection or add automatic fallback.
 - Keep workflow state serializable. Do not put open DOCX objects, subprocesses, callbacks, or file handles in state.
-- Follow `backend/dev_workflow/AGENTS.md` for development-workflow code. DevFlow must remain separate from the document-editing provider and approval flow.
+- Treat provider responses and model-generated plans as untrusted. Validate them against existing schemas before they can affect operations, state transitions, or user-visible claims.
+- Keep approval tied to the exact operation or proposal being approved; reject missing or stale approval rather than inferring consent.
+- DevFlow is maintained in the repository-root `dev_workflow/` package and is outside the backend. Follow `dev_workflow/AGENTS.md` when changing it; keep it separate from the document-editing provider and approval flow.
 
 ## Backend verification
 

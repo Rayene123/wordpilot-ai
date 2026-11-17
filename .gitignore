@@ -35,5 +35,7 @@ Desktop.ini
 /output/
 /outputs/
 /generated-documents/
+/\.devflow-worktrees/
+/.devflow/
 
 /uploads/

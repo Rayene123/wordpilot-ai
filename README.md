@@ -32,6 +32,45 @@ npm run dev
 
 The frontend reads `NEXT_PUBLIC_WORDPILOT_API_URL` from `frontend/.env.local` (default `http://127.0.0.1:8000`). Start the FastAPI backend separately. The browser calls its existing endpoints directly; Groq credentials remain in the backend environment.
 
+## DevFlow development orchestrator
+
+`dev_workflow/` is an optional, separate Python package for orchestrating software-development tasks with Codex CLI. It is not part of WordPilot's DOCX backend and does not use the Groq/Ollama document-editing providers. The current package exposes its LangGraph workflow as a Python API; it does not provide a standalone CLI or UI. Codex CLI must be installed separately for live analysis or implementation. Implementation remains behind explicit human approval, and runs in a host-created Git worktree with host-side diff validation.
+
+DevFlow approvals use a persistent SQLite LangGraph checkpointer. The host must select and reuse the same database file and workflow run ID to resume an approval after restarting the process. The default local developer location is `.devflow/checkpoints.sqlite3`; this directory is ignored by Git. Evidence JSON files are for inspection and are never used as approval tokens. Open and close the saver around each process lifecycle:
+
+```python
+from pathlib import Path
+from dev_workflow import (
+    build_dev_workflow,
+    new_workflow_state,
+    open_sqlite_checkpointer,
+    resume_pending_approval,
+    workflow_config,
+)
+
+database = Path(".devflow/checkpoints.sqlite3")
+with open_sqlite_checkpointer(database) as checkpointer:
+    graph = build_dev_workflow(checkpointer=checkpointer)
+    state = new_workflow_state(task, repository_path)
+    graph.invoke(state, workflow_config(state["run_id"]))
+    # Display the saved proposal and collect a human decision.
+
+# In a later process, reopen the same database and use the original run ID.
+with open_sqlite_checkpointer(database) as checkpointer:
+    graph = build_dev_workflow(checkpointer=checkpointer)
+    result = resume_pending_approval(graph, run_id, human_decision)
+```
+
+`resume_pending_approval` verifies that the saved run is paused at its approval interrupt, that the interrupt and current proposal agree, and that the decision fingerprint and revision match before resuming LangGraph.
+
+Run the DevFlow tests from the repository root:
+
+```powershell
+py -3.12 -m pytest tests/test_dev_workflow_schemas.py tests/test_dev_workflow_state.py tests/test_dev_workflow_codex_cli.py tests/test_dev_workflow_graph.py tests/test_dev_workflow_worktree.py tests/test_dev_workflow_checkpointing.py -q
+```
+
+Import the workflow from the root package with `from dev_workflow import build_dev_workflow`. The full backend and repository test command remains `python -m pytest -q`.
+
 ## Agent foundation
 
 `backend/operation_schemas.py` defines three strict-by-shape Pydantic operation models and a discriminated union keyed by `operation_type` (`replace`, `insert`, or `remove`). `backend/agent/schemas.py` re-exports those same models for compatibility. Extra fields and unknown operation names are rejected. `DocumentAgentState` in `backend/agent/state.py` contains paths and JSON-friendly values only; it does not hold open DOCX objects.

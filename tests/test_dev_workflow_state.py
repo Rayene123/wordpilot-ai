@@ -2,29 +2,24 @@ from __future__ import annotations
 
 import json
 
-from backend.dev_workflow.schemas import TaskProposal, new_approval
-from backend.dev_workflow.state import DevWorkflowState
+from dev_workflow.graph import new_workflow_state
+from dev_workflow.schemas import TaskProposal, new_workflow_decision
 
 
-def test_state_is_json_serializable_and_contains_no_runtime_handles():
-    proposal = TaskProposal(
-        task_description="Add a response field.",
-        requirements=["Keep compatibility."],
-        acceptance_criteria=["Field is returned."],
-        implementation_plan=["Update API."],
-    )
-    approval = new_approval(proposal, approved=False)
-    state: DevWorkflowState = {
-        "run_id": "run-1",
-        "task_description": proposal.task_description,
-        "repository_path": "C:/repo",
-        "current_stage": "analysis_completed",
-        "errors": [],
-        "proposal": proposal.model_dump(mode="json"),
-        "proposal_fingerprint": approval.proposal_fingerprint,
-        "approval": approval.model_dump(mode="json"),
-        "execution_result": None,
-    }
+def test_state_is_json_serializable_and_contains_no_runtime_handles(tmp_path):
+    state = new_workflow_state("Add a response field.", tmp_path)
+    proposal = TaskProposal.model_validate({
+        "task_summary": "Add a response field.", "requirements": ["Keep compatibility."],
+        "acceptance_criteria": ["Field is returned."],
+        "implementation_steps": [{"order": 1, "description": "Update API."}],
+        "expected_files": [{"path": "backend/api.py", "action": "modify", "rationale": "Add field."}],
+        "file_scope": {"included_files": ["backend/api.py"]},
+        "technical_decisions": [{"decision": "Extend response", "rationale": "Existing pattern."}],
+        "testing_strategy": ["Run API tests."],
+    })
+    state["proposal"] = proposal.model_dump(mode="json")
+    state["proposal_fingerprint"] = new_workflow_decision(proposal, action="reject").proposal_fingerprint
+    state["decisions"] = [new_workflow_decision(proposal, action="reject").model_dump(mode="json")]
     encoded = json.dumps(state)
-    assert json.loads(encoded)["current_stage"] == "analysis_completed"
+    assert json.loads(encoded)["current_stage"] == "analysis_pending"
     assert "subprocess" not in encoded
