@@ -41,6 +41,23 @@ The graph inspects first, validates the full operation list before any edits, th
 
 The default provider uses LangChain `ChatOpenAI` structured output. Configure `OPENAI_API_KEY`, `WORDPILOT_LLM_MODEL` (default `gpt-4o-mini`), and `WORDPILOT_LLM_TIMEOUT_SECONDS` (default `30`); see `.env.example`. The provider has no automatic retries. Unit tests inject a mock provider and make no external API calls. Planning is not connected to the deterministic editing graph.
 
+## Planning and human approval
+
+The LLM-assisted workflow is exposed separately from `build_document_graph`:
+
+```python
+from backend.agent import plan_document, execute_approved_proposal
+
+proposal = plan_document("source.docx", "Replace Draft with Final")
+if proposal["planning_status"] == "awaiting_approval":
+    # Present proposal["proposed_operations"] to a human before deciding.
+    result = execute_approved_proposal(
+        proposal, approved=True, output_directory="edited-documents",
+    )
+```
+
+Planning only inspects and proposes. Its serializable result contains the summary, validated operations, a planning status, and a message; it does not create an edited document. Clarification and unsupported requests have no executable operations. The caller must explicitly pass `approved=True` to execute, `approved=False` rejects without editing, and omitted approval stays pending without editing. Execution checks an opaque one-time process token against the complete returned proposal, verifies the source DOCX fingerprint, and validates operations again. It uses the existing deterministic tools and a unique host-selected output path, so the source file is not overwritten. The in-memory token registry and keying context are scoped to the running Python process; proposals should be planned and approved in that process. The token is not a defense against arbitrary code execution inside the same Python process, which can inspect or alter process memory. The deterministic graph continues to accept explicitly supplied operations and retains its prior inspect/validate/execute behavior without an approval step.
+
 ## Replacement approach
 
 `replace_text` scans body paragraphs and table-cell paragraphs in document order. It groups adjacent runs only when they contain paragraph run properties and text nodes. It changes the underlying `w:t` nodes directly, leaving the run elements, paragraph properties, and other XML in place. Text spanning multiple runs is placed in the first matched run, so it inherits that run's formatting. A run containing a drawing, field, break, or other non-text element forms a hard boundary. Missing targets return zero replacements and do not save the document.

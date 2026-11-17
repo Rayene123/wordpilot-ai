@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, NotRequired, TypedDict
+
+PlanningStatus = Literal[
+    "pending", "awaiting_approval", "needs_clarification", "unsupported", "failed",
+]
+ApprovalStatus = Literal["pending", "approved", "rejected"]
+ExecutionStatus = Literal["pending", "completed", "partial", "failed", "not_executed"]
 
 
 class DocumentAgentState(TypedDict):
@@ -20,3 +26,8 @@ class DocumentAgentState(TypedDict):
     final_response: str | None
     output_path: str | None
     workflow_status: Literal["pending", "inspected", "validated", "completed", "partial", "failed"]
+    planning_status: NotRequired[PlanningStatus]
+    approval_status: NotRequired[ApprovalStatus]
+    approved_operations: NotRequired[list[dict[str, Any]]]
+    clarification_request: NotRequired[str | None]
+    execution_status: NotRequired[ExecutionStatus]
