@@ -3,9 +3,11 @@
 from .inspection import DocumentSummary, ParagraphInfo, RunInfo, TableInfo, inspect_document
 from .paragraph_operations import OperationResult, insert_paragraph, remove_paragraph
 from .replacement import ReplacementResult, replace_text
+from .integrity import IntegrityCheck, IntegrityReport, verify_document_integrity
 
 __all__ = [
     "DocumentSummary", "ParagraphInfo", "RunInfo", "TableInfo",
     "OperationResult", "ReplacementResult", "inspect_document", "replace_text",
     "insert_paragraph", "remove_paragraph",
+    "IntegrityCheck", "IntegrityReport", "verify_document_integrity",
 ]

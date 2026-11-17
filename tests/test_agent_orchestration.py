@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from docx import Document
 import pytest
 
+from backend.docx_editor.integrity import IntegrityCheck, IntegrityReport
 from backend.agent import (
     PlanningResult,
     execute_approved_proposal,
@@ -58,7 +61,9 @@ def test_approval_executes_and_preserves_original(make_docx, tmp_path):
     result = execute_approved_proposal(proposal, approved=True, output_directory=tmp_path)
 
     assert result["approval_status"] == "approved"
-    assert result["execution_status"] == "completed"
+    assert result["execution_status"] == "completed_verified"
+    assert result["integrity_status"] == "passed"
+    assert result["integrity_report"]["status"] == "passed"
     assert result["execution_results"][0]["success"] is True
     assert Document(result["output_path"]).paragraphs[1].text == "Updated paragraph"
     assert source.read_bytes() == original
@@ -72,7 +77,8 @@ def test_rejection_does_not_create_output(make_docx, tmp_path):
     result = execute_approved_proposal(proposal, approved=False, output_directory=tmp_path)
 
     assert result["approval_status"] == "rejected"
-    assert result["execution_status"] == "not_executed"
+    assert result["execution_status"] == "rejected"
+    assert result["integrity_status"] == "not_run"
     assert result["output_path"] is None
     assert not list(tmp_path.glob("*_edited_*.docx"))
 
@@ -83,7 +89,8 @@ def test_missing_approval_does_not_create_output(make_docx, tmp_path):
     result = execute_approved_proposal(proposal, output_directory=tmp_path)
 
     assert result["approval_status"] == "pending"
-    assert result["execution_status"] == "not_executed"
+    assert result["execution_status"] == "pending"
+    assert result["integrity_status"] == "not_run"
     assert result["output_path"] is None
     assert not list(tmp_path.glob("*_edited_*.docx"))
 
@@ -91,7 +98,7 @@ def test_missing_approval_does_not_create_output(make_docx, tmp_path):
 def test_malformed_proposal_is_rejected_without_execution(tmp_path):
     result = execute_approved_proposal(None, approved=True, output_directory=tmp_path)
 
-    assert result["execution_status"] == "failed"
+    assert result["execution_status"] == "execution_failed"
     assert "mapping" in result["errors"][0]
     assert not list(tmp_path.glob("*_edited_*.docx"))
 
@@ -110,7 +117,7 @@ def test_modified_security_relevant_proposal_fields_are_rejected(make_docx, tmp_
 
     result = execute_approved_proposal(proposal, approved=True, output_directory=tmp_path)
 
-    assert result["execution_status"] == "failed"
+    assert result["execution_status"] == "execution_failed"
     assert "changed" in result["errors"][0]
     assert result["output_path"] is None
     assert not list(tmp_path.glob("*_edited_*.docx"))
@@ -122,7 +129,7 @@ def test_truthy_non_boolean_approval_is_not_accepted(make_docx, tmp_path, approv
 
     result = execute_approved_proposal(proposal, approved=approval, output_directory=tmp_path)
 
-    assert result["execution_status"] == "failed"
+    assert result["execution_status"] == "execution_failed"
     assert result["approval_status"] == "pending"
     assert not list(tmp_path.glob("*_edited_*.docx"))
 
@@ -133,7 +140,7 @@ def test_schema_invalid_operation_is_rejected_before_execution(make_docx, tmp_pa
 
     result = execute_approved_proposal(proposal, approved=True, output_directory=tmp_path)
 
-    assert result["execution_status"] == "failed"
+    assert result["execution_status"] == "execution_failed"
     assert "changed" in result["errors"][0].lower()
     assert not list(tmp_path.glob("*_edited_*.docx"))
 
@@ -147,7 +154,7 @@ def test_caller_cannot_mint_a_valid_marker_for_an_arbitrary_proposal(make_docx, 
 
     result = execute_approved_proposal(proposal, approved=True, output_directory=tmp_path)
 
-    assert result["execution_status"] == "failed"
+    assert result["execution_status"] == "execution_failed"
     assert "changed" in result["errors"][0]
     assert not list(tmp_path.glob("*_edited_*.docx"))
 
@@ -194,7 +201,7 @@ def test_execution_failure_reports_failed_and_no_original_change(make_docx, tmp_
 
     result = execute_approved_proposal(proposal, approved=True, output_directory=tmp_path)
 
-    assert result["execution_status"] == "failed"
+    assert result["execution_status"] == "execution_failed"
     assert "changed after planning" in result["errors"][0]
     assert result["output_path"] is None
     assert source.read_bytes() == changed_original
@@ -207,8 +214,8 @@ def test_issued_proposal_token_is_one_time(make_docx, tmp_path):
     first = execute_approved_proposal(proposal, approved=True, output_directory=tmp_path)
     second = execute_approved_proposal(proposal, approved=True, output_directory=tmp_path)
 
-    assert first["execution_status"] == "completed"
-    assert second["execution_status"] == "failed"
+    assert first["execution_status"] == "completed_verified"
+    assert second["execution_status"] == "execution_failed"
     assert "content changed" in second["errors"][0]
     assert len(list(tmp_path.glob("*_edited_*.docx"))) == 1
 
@@ -235,6 +242,161 @@ def test_deterministic_execution_failure_is_returned_without_source_change(make_
     result = execute_approved_proposal(proposal, approved=True, output_directory=tmp_path)
 
     assert calls
-    assert result["execution_status"] == "failed"
+    assert result["execution_status"] == "execution_failed"
     assert result["errors"] == ["Operation 1 failed: simulated editor failure"]
     assert source.read_bytes() == original
+
+
+def _integrity_report(status, *, unverified=(), unexpected=(), summary=None):
+    """Build a small verifier report fixture for orchestration boundary tests."""
+    return IntegrityReport(
+        status=status,
+        checks=[IntegrityCheck(name="synthetic", status=status, details=["test result"])],
+        unexpected_changes=list(unexpected),
+        expected_changes=[],
+        unverified_features=list(unverified),
+        errors=[],
+        summary=summary or f"synthetic {status} report",
+    )
+
+
+def test_verifier_receives_original_output_and_exact_approved_operations(make_docx, tmp_path, monkeypatch):
+    import backend.agent.orchestration as orchestration
+
+    source = make_docx()
+    proposal = plan_document(source, "Change it", planner=MockPlanner(_replace_result()))
+    calls = []
+
+    def verifier(original_path, edited_path, operations):
+        calls.append((original_path, edited_path, operations))
+        return _integrity_report("passed")
+
+    monkeypatch.setattr(orchestration, "verify_document_integrity", verifier)
+    result = execute_approved_proposal(proposal, approved=True, output_directory=tmp_path)
+
+    assert len(calls) == 1
+    original_path, edited_path, operations = calls[0]
+    assert original_path == source.resolve()
+    assert edited_path == Path(result["output_path"]).resolve()
+    assert edited_path != original_path
+    assert operations == proposal["proposed_operations"] == result["approved_operations"]
+    assert result["execution_status"] == "completed_verified"
+
+
+def test_partial_verification_returns_completed_partially_verified(make_docx, tmp_path, monkeypatch):
+    import backend.agent.orchestration as orchestration
+
+    proposal = plan_document(make_docx(), "Change it", planner=MockPlanner(_replace_result()))
+    monkeypatch.setattr(orchestration, "verify_document_integrity", lambda *args: _integrity_report(
+        "partially_verified", unverified=["image placement and cropping"],
+    ))
+
+    result = execute_approved_proposal(proposal, approved=True, output_directory=tmp_path)
+
+    assert result["execution_status"] == "completed_partially_verified"
+    assert result["integrity_status"] == "partially_verified"
+    assert "image placement and cropping" in result["final_response"]
+    assert Document(result["output_path"]).paragraphs[1].text == "Updated paragraph"
+
+
+def test_integrity_failure_preserves_output_and_marks_it_unverified(make_docx, tmp_path, monkeypatch):
+    import backend.agent.orchestration as orchestration
+
+    proposal = plan_document(make_docx(), "Change it", planner=MockPlanner(_replace_result()))
+    monkeypatch.setattr(orchestration, "verify_document_integrity", lambda *args: _integrity_report(
+        "failed", unexpected=["unexpected table change"], summary="unexpected table change",
+    ))
+
+    result = execute_approved_proposal(proposal, approved=True, output_directory=tmp_path)
+
+    assert result["execution_status"] == "integrity_failed"
+    assert result["integrity_status"] == "failed"
+    assert result["integrity_report"]["unexpected_changes"] == ["unexpected table change"]
+    assert "unverified" in result["final_response"].lower()
+    assert Document(result["output_path"]).paragraphs[1].text == "Updated paragraph"
+    assert Path(result["output_path"]).is_file()
+
+
+def test_inconsistent_pass_report_is_never_mapped_to_success(make_docx, tmp_path, monkeypatch):
+    import backend.agent.orchestration as orchestration
+
+    proposal = plan_document(make_docx(), "Change it", planner=MockPlanner(_replace_result()))
+    inconsistent = _integrity_report("passed", unexpected=["unexpected content"])
+    monkeypatch.setattr(orchestration, "verify_document_integrity", lambda *args: inconsistent)
+
+    result = execute_approved_proposal(proposal, approved=True, output_directory=tmp_path)
+
+    assert result["execution_status"] == "integrity_failed"
+    assert result["integrity_status"] == "failed"
+    assert "unexpected content" in result["integrity_report"]["unexpected_changes"]
+
+
+def test_verifier_exception_becomes_integrity_failure_and_keeps_output(make_docx, tmp_path, monkeypatch):
+    import backend.agent.orchestration as orchestration
+
+    proposal = plan_document(make_docx(), "Change it", planner=MockPlanner(_replace_result()))
+
+    def broken_verifier(*args):
+        raise RuntimeError("verifier crashed")
+
+    monkeypatch.setattr(orchestration, "verify_document_integrity", broken_verifier)
+    result = execute_approved_proposal(proposal, approved=True, output_directory=tmp_path)
+
+    assert result["execution_status"] == "integrity_failed"
+    assert result["integrity_status"] == "failed"
+    assert "verifier crashed" in result["integrity_report"]["errors"][0]
+    assert Path(result["output_path"]).is_file()
+    assert "unverified" in result["final_response"].lower()
+
+
+def test_rejection_never_invokes_verifier(make_docx, tmp_path, monkeypatch):
+    import backend.agent.orchestration as orchestration
+
+    proposal = plan_document(make_docx(), "Change it", planner=MockPlanner(_replace_result()))
+    monkeypatch.setattr(orchestration, "verify_document_integrity", lambda *args: pytest.fail("must not verify"))
+
+    result = execute_approved_proposal(proposal, approved=False, output_directory=tmp_path)
+
+    assert result["execution_status"] == "rejected"
+    assert result["integrity_status"] == "not_run"
+
+
+def test_modified_proposal_never_invokes_verifier(make_docx, tmp_path, monkeypatch):
+    import backend.agent.orchestration as orchestration
+
+    proposal = plan_document(make_docx(), "Change it", planner=MockPlanner(_replace_result()))
+    proposal["user_instruction"] = "Tampered instruction"
+    monkeypatch.setattr(orchestration, "verify_document_integrity", lambda *args: pytest.fail("must not verify"))
+
+    result = execute_approved_proposal(proposal, approved=True, output_directory=tmp_path)
+
+    assert result["execution_status"] == "execution_failed"
+    assert result["integrity_status"] == "not_run"
+
+
+def test_partial_editor_output_is_preserved_but_not_verified(make_docx, tmp_path, monkeypatch):
+    import shutil
+    import backend.agent.orchestration as orchestration
+
+    source = make_docx()
+    proposal = plan_document(source, "Change it", planner=MockPlanner(_replace_result()))
+    partial_output = tmp_path / "partial.docx"
+    shutil.copyfile(source, partial_output)
+
+    def partial_executor(state, output_directory):
+        return {
+            "execution_results": [{"success": True}, {"success": False}],
+            "warnings": [], "errors": ["second operation failed"],
+            "output_path": str(partial_output), "workflow_status": "partial",
+        }
+
+    monkeypatch.setattr(orchestration, "_execute_node", partial_executor)
+    monkeypatch.setattr(orchestration, "verify_document_integrity", lambda *args: pytest.fail("partial output must not be verified"))
+
+    result = execute_approved_proposal(proposal, approved=True, output_directory=tmp_path)
+
+    assert result["execution_status"] == "execution_failed"
+    assert result["integrity_status"] == "not_run"
+    assert result["output_path"] == str(partial_output)
+    assert Path(result["output_path"]).is_file()
+    assert "unverified" in result["final_response"].lower()

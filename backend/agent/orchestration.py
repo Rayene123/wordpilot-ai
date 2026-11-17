@@ -12,6 +12,8 @@ from typing import Any, Literal, Mapping
 
 from pydantic import TypeAdapter, ValidationError
 
+from backend.docx_editor.integrity import IntegrityCheck, IntegrityReport, verify_document_integrity
+
 from .graph import _execute_node, _parse_tool_result
 from .planner import OperationPlanner, PlanningError, PlanningModel
 from .schemas import DocumentOperation
@@ -88,29 +90,15 @@ def execute_approved_proposal(
     """Reject, defer, or execute a proposal after an explicit approval decision.
 
     Only the exact proposal returned by :func:`plan_document` can be approved:
-    its opaque one-time token and complete contents are checked before operation validation. Approved operations are
-    validated again and executed through the existing fixed DOCX tools. Output
-    is always written to a unique file in the host-selected directory.
+    its opaque one-time token and complete contents are checked before operation
+    validation. Approved operations are validated again and executed through the
+    existing fixed DOCX tools. A completed output is then checked against the
+    source and those exact validated operations. Output is always written to a
+    unique file in the host-selected directory.
     """
     if not isinstance(proposal, Mapping):
         return _execution_failure(_empty_execution_result(), "Proposal must be a mapping returned by plan_document.")
     result = _execution_base(proposal)
-    if approved is None:
-        result.update({
-            "approval_status": "pending",
-            "execution_status": "not_executed",
-            "final_response": "Approval was not supplied; no document was edited.",
-        })
-        return result
-    if approved is False:
-        result.update({
-            "approval_status": "rejected",
-            "execution_status": "not_executed",
-            "final_response": "The proposal was rejected; no document was edited.",
-        })
-        return result
-    if approved is not True:
-        return _execution_failure(result, "Approval must be explicitly true or false.")
     if proposal.get("planning_status") in {"needs_clarification", "unsupported"}:
         result.update({
             "execution_status": "not_executed",
@@ -122,6 +110,29 @@ def execute_approved_proposal(
     expected_digest = proposal.get("proposal_digest")
     if not isinstance(expected_digest, str) or not _proposal_is_unchanged(proposal, expected_digest):
         return _execution_failure(result, "Proposal content changed after it was presented for approval.")
+    if approved is None:
+        result.update({
+            "approval_status": "pending",
+            "execution_status": "pending",
+            "final_response": "Approval was not supplied; no document was edited.",
+        })
+        return result
+    if approved is False:
+        result.update({
+            "approval_status": "rejected",
+            "execution_status": "rejected",
+            "final_response": "The proposal was rejected; no document was edited.",
+        })
+        return result
+    if approved is not True:
+        return _execution_failure(result, "Approval must be explicitly true or false.")
+    try:
+        source = Path(proposal["document_path"]).expanduser().resolve()
+        if _file_fingerprint(source) != proposal.get("source_fingerprint"):
+            return _execution_failure(result, "Source document changed after planning; please plan again.")
+    except (KeyError, TypeError, OSError, ValueError) as exc:
+        return _execution_failure(result, f"Could not verify source document identity: {exc}")
+
     try:
         operations = _OPERATIONS.validate_python(proposal.get("proposed_operations"))
         if not operations:
@@ -129,16 +140,9 @@ def execute_approved_proposal(
         output_dir = Path(output_directory).expanduser().resolve()
         if not output_dir.exists() or not output_dir.is_dir():
             raise ValueError(f"Output directory must already exist: {output_dir}")
-        source = Path(proposal["document_path"]).expanduser().resolve()
         approved_ops = [item.model_dump(mode="json") for item in operations]
     except (KeyError, TypeError, ValueError, ValidationError) as exc:
         return _execution_failure(result, f"Approved proposal is invalid: {exc}")
-
-    try:
-        if _file_fingerprint(source) != proposal.get("source_fingerprint"):
-            return _execution_failure(result, "Source document changed after planning; please plan again.")
-    except OSError as exc:
-        return _execution_failure(result, f"Could not verify source document identity: {exc}")
 
     # Consume the approval token before the first edit so the same approval
     # cannot be replayed to create another output document.
@@ -152,18 +156,106 @@ def execute_approved_proposal(
         "errors": [],
         "warnings": [],
     }
-    execution = _execute_node(execution_state, output_dir)
+    try:
+        execution = _execute_node(execution_state, output_dir)
+    except Exception as exc:
+        result.update({
+            "approval_status": "approved",
+            "execution_status": "execution_failed",
+            "integrity_status": "not_run",
+            "errors": [f"Document execution failed: {exc}"],
+            "final_response": f"Document execution failed. {exc}",
+        })
+        return result
     status = execution["workflow_status"]
     result.update({
         "approval_status": "approved",
-        "execution_status": status,
         "approved_operations": approved_ops,
         "execution_results": execution["execution_results"],
         "warnings": execution["warnings"],
         "errors": execution["errors"],
         "output_path": execution["output_path"],
-        "final_response": _execution_message(status, execution),
     })
+    if status != "completed":
+        result.update({
+            "execution_status": "execution_failed",
+            "integrity_status": "not_run",
+            "final_response": _execution_message(status, execution),
+        })
+        if execution["output_path"]:
+            result["final_response"] += f" Partial output is preserved but unverified: {execution['output_path']}"
+        return result
+
+    output_path = execution.get("output_path")
+    try:
+        if not output_path:
+            raise ValueError("The editor reported completion without an output file.")
+        output = Path(output_path).expanduser().resolve()
+        if output == source:
+            raise ValueError("The editor output path resolves to the original source document.")
+        if output.parent != output_dir or not output.is_file():
+            raise ValueError("The editor output is missing or outside the host-selected output directory.")
+    except (OSError, TypeError, ValueError) as exc:
+        result.update({
+            "execution_status": "execution_failed",
+            "integrity_status": "not_run",
+            "errors": [f"Document output validation failed: {exc}"],
+            "final_response": f"Document execution failed. {exc}",
+        })
+        return result
+
+    try:
+        report = verify_document_integrity(source, output, approved_ops)
+        report = report if isinstance(report, IntegrityReport) else IntegrityReport.model_validate(report)
+        failed_checks = any(check.status == "failed" for check in report.checks)
+        partial_checks = any(check.status == "partially_verified" for check in report.checks)
+        if report.status == "passed" and (failed_checks or report.unexpected_changes or report.errors):
+            report = report.model_copy(update={
+                "status": "failed",
+                "summary": "Verifier returned passed with failed checks or unexpected changes; treated as failed.",
+            })
+        elif report.status == "passed" and (partial_checks or report.unverified_features):
+            report = report.model_copy(update={
+                "status": "partially_verified",
+                "summary": "Verifier reported unverified features; treated as partially verified.",
+            })
+        elif report.status == "partially_verified" and (failed_checks or report.unexpected_changes or report.errors):
+            report = report.model_copy(update={
+                "status": "failed",
+                "summary": "Verifier reported unexpected changes or failed checks; treated as failed.",
+            })
+    except Exception as exc:
+        report = IntegrityReport(
+            status="failed",
+            checks=[IntegrityCheck(
+                name="integrity_verifier",
+                status="failed",
+                details=[f"Integrity verification did not complete: {exc}"],
+            )],
+            unexpected_changes=[],
+            expected_changes=[],
+            unverified_features=[],
+            errors=[f"Integrity verification did not complete: {exc}"],
+            summary=f"Integrity verification failed to complete: {exc}",
+        )
+    result["integrity_report"] = report.model_dump(mode="json")
+    result["integrity_status"] = report.status
+    if report.status == "passed":
+        result["execution_status"] = "completed_verified"
+        result["final_response"] = f"Completed and verified {len(execution['execution_results'])} document operation(s). Output: {result['output_path']}"
+    elif report.status == "partially_verified":
+        result["execution_status"] = "completed_partially_verified"
+        reasons = " ".join(report.unverified_features)
+        result["final_response"] = (
+            f"Completed with partial integrity verification. Output: {result['output_path']}. "
+            f"Not fully checked: {reasons or report.summary}"
+        )
+    else:
+        result["execution_status"] = "integrity_failed"
+        result["final_response"] = (
+            f"Integrity verification failed. Output is preserved for diagnosis and is unverified: {result['output_path']}. "
+            f"{report.summary}"
+        )
     return result
 
 
@@ -241,6 +333,8 @@ def _execution_base(proposal: Mapping[str, Any]) -> dict[str, Any]:
         "planning_status": proposal.get("planning_status", "failed"),
         "approval_status": "pending",
         "execution_status": "pending",
+        "integrity_status": "not_run",
+        "integrity_report": None,
         "document_path": proposal.get("document_path"),
         "user_instruction": proposal.get("user_instruction"),
         "document_summary": proposal.get("document_summary"),
@@ -262,6 +356,8 @@ def _empty_execution_result() -> dict[str, Any]:
         "planning_status": "failed",
         "approval_status": "pending",
         "execution_status": "pending",
+        "integrity_status": "not_run",
+        "integrity_report": None,
         "document_path": None,
         "user_instruction": None,
         "document_summary": None,
@@ -281,7 +377,8 @@ def _execution_failure(result: dict[str, Any], error: str) -> dict[str, Any]:
     """Mark an invalid approval attempt failed without invoking document tools."""
     result.update({
         "approval_status": "pending",
-        "execution_status": "failed",
+        "execution_status": "execution_failed",
+        "integrity_status": "not_run",
         "errors": [error],
         "final_response": f"Execution was blocked. {error}",
     })

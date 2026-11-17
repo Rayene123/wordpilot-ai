@@ -8,7 +8,11 @@ PlanningStatus = Literal[
     "pending", "awaiting_approval", "needs_clarification", "unsupported", "failed",
 ]
 ApprovalStatus = Literal["pending", "approved", "rejected"]
-ExecutionStatus = Literal["pending", "completed", "partial", "failed", "not_executed"]
+ExecutionStatus = Literal[
+    "pending", "completed", "partial", "failed", "not_executed", "rejected",
+    "execution_failed", "completed_verified", "completed_partially_verified", "integrity_failed",
+]
+IntegrityStatus = Literal["not_run", "passed", "partially_verified", "failed"]
 
 
 class DocumentAgentState(TypedDict):
@@ -31,3 +35,5 @@ class DocumentAgentState(TypedDict):
     approved_operations: NotRequired[list[dict[str, Any]]]
     clarification_request: NotRequired[str | None]
     execution_status: NotRequired[ExecutionStatus]
+    integrity_status: NotRequired[IntegrityStatus]
+    integrity_report: NotRequired[dict[str, Any] | None]

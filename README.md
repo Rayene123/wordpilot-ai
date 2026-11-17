@@ -11,7 +11,7 @@ python -m pytest -q
 
 ## Agent foundation
 
-`backend/agent/schemas.py` defines three strict-by-shape Pydantic operation models and a discriminated union keyed by `operation_type` (`replace`, `insert`, or `remove`). Extra fields and unknown operation names are rejected. `DocumentAgentState` in `backend/agent/state.py` contains paths and JSON-friendly values only; it does not hold open DOCX objects.
+`backend/operation_schemas.py` defines three strict-by-shape Pydantic operation models and a discriminated union keyed by `operation_type` (`replace`, `insert`, or `remove`). `backend/agent/schemas.py` re-exports those same models for compatibility. Extra fields and unknown operation names are rejected. `DocumentAgentState` in `backend/agent/state.py` contains paths and JSON-friendly values only; it does not hold open DOCX objects.
 
 `create_document_tools(document_path, output_path=None)` creates exactly four LangChain tools bound to host-selected paths: inspect, replace, insert, and remove. The model cannot supply paths or choose arbitrary Python functions. Tool arguments use the validated schemas and results are JSON strings containing the operation result. A successful edit advances the tool set's active document to its output so later edits can build on earlier ones. This module provides tool adapters and state only; it does not build or invoke a LangGraph workflow.
 
@@ -56,7 +56,23 @@ if proposal["planning_status"] == "awaiting_approval":
     )
 ```
 
-Planning only inspects and proposes. Its serializable result contains the summary, validated operations, a planning status, and a message; it does not create an edited document. Clarification and unsupported requests have no executable operations. The caller must explicitly pass `approved=True` to execute, `approved=False` rejects without editing, and omitted approval stays pending without editing. Execution checks an opaque one-time process token against the complete returned proposal, verifies the source DOCX fingerprint, and validates operations again. It uses the existing deterministic tools and a unique host-selected output path, so the source file is not overwritten. The in-memory token registry and keying context are scoped to the running Python process; proposals should be planned and approved in that process. The token is not a defense against arbitrary code execution inside the same Python process, which can inspect or alter process memory. The deterministic graph continues to accept explicitly supplied operations and retains its prior inspect/validate/execute behavior without an approval step.
+Planning only inspects and proposes. Its serializable result contains the summary, validated operations, a planning status, and a message; it does not create an edited document. Clarification and unsupported requests have no executable operations. The caller must explicitly pass `approved=True` to execute, `approved=False` rejects, and omitted approval remains pending. Execution verifies the opaque one-time process token, requires explicit approval, checks the source DOCX fingerprint, and validates operations again before editing through the deterministic tools. The output path is generated inside the host-selected directory and cannot be supplied by the caller. The original source is not overwritten.
+
+After a complete edit, orchestration calls the integrity verifier with the original source path, generated output path, and exact operations bound to the approved proposal. The returned result includes `integrity_status` and the full `integrity_report`:
+
+- `completed_verified`: supported integrity checks passed.
+- `completed_partially_verified`: checks passed, but the report lists features that could not be fully checked.
+- `integrity_failed`: verification found unexpected changes or raised an error. The generated file is kept for diagnosis and explicitly reported as unverified; it is not automatically deleted.
+- `execution_failed`: editing or output validation failed. Any partial output is preserved and labeled unverified.
+- `pending` / `rejected`: no document edits or integrity verification occurred.
+
+The in-memory approval registry remains process-local, so planning and approval must happen in the same Python process. It is not a defense against arbitrary code already running inside that process. The deterministic graph continues to accept explicitly supplied operations and retains its prior inspect/validate/execute behavior without this approval and verification step.
+
+## DOCX integrity verification
+
+`backend.docx_editor.integrity.verify_document_integrity(original_path, edited_path, approved_operations)` is a read-only comparison API. It validates operations with the existing Pydantic schemas, simulates the approved replacements/insertions/removals in an in-memory expectation, and returns an `IntegrityReport` with an overall status, named checks, expected changes, unexpected changes, unverified features, and errors. It does not modify either DOCX. The approved execution flow calls it only after a complete deterministic edit.
+
+The verifier checks ordered body and table-cell paragraphs (including nested tables and paragraph position relative to tables), paragraph styles, alignment and direct paragraph properties, run bold/italic/underline/font name/font size and other direct run properties, table dimensions and table/row/cell properties, document section properties, inline image references and bytes, and every ZIP package component. Image placement and cropping are not compared, so documents with inline images are reported as `partially_verified`. Supported operations affect only the main `word/document.xml` content; all other package parts are required to remain byte-identical. ZIP compression and entry order are ignored by comparing decompressed component hashes. Package inspection is bounded to 10,000 entries, 64 MiB per component, and 256 MiB total uncompressed size. Invalid operations, missing files, malformed packages, unexpected differences, or missing expected targets produce `failed`. Known Word features not semantically interpreted, such as non-empty headers/footers, tracked changes, content controls, embedded objects, VML shapes, fields, bookmarks, and hyperlinks, produce `partially_verified` if no other failure is found. This checks preservation within the described scope and does not certify full OOXML compatibility.
 
 ## Replacement approach
 
