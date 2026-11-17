@@ -35,32 +35,51 @@ class LangChainPlanningProvider:
         try:
             return self._model.with_structured_output(schema).invoke(messages)
         except Exception as exc:
-            raise PlanningProviderError(f"Structured model request failed: {exc}") from exc
+            # Provider exception text can contain request fragments. Keep the
+            # user-facing error useful without exposing prompts or document text.
+            kind = "timed out" if isinstance(exc, (TimeoutError,)) or "timeout" in type(exc).__name__.lower() else "connection or response error"
+            raise PlanningProviderError(f"Structured model request failed ({kind}).") from None
 
 
 def create_planning_provider() -> LangChainPlanningProvider:
-    """Create the configured OpenAI-compatible LangChain model.
+    """Create the explicitly selected LangChain planning model.
 
-    Configuration: OPENAI_API_KEY, WORDPILOT_LLM_MODEL, and
-    WORDPILOT_LLM_TIMEOUT_SECONDS. The API key is read only from the environment.
-    A positive request timeout is required, and LangChain retries are disabled so
-    a failed planning call returns control to the caller immediately.
+    Ollama is the privacy-preserving default. OpenAI is used only when selected
+    explicitly through WORDPILOT_LLM_PROVIDER=openai.
     """
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise PlanningProviderError("OPENAI_API_KEY is required to create the planning provider.")
-    model_name = os.getenv("WORDPILOT_LLM_MODEL", "gpt-4o-mini")
+    provider_name = os.getenv("WORDPILOT_LLM_PROVIDER", "ollama").strip().lower()
     try:
         timeout = float(os.getenv("WORDPILOT_LLM_TIMEOUT_SECONDS", "30"))
         if timeout <= 0:
             raise ValueError("timeout must be positive")
-        from langchain_openai import ChatOpenAI
+        if provider_name == "ollama":
+            from langchain_ollama import ChatOllama
 
-        return LangChainPlanningProvider(ChatOpenAI(
-            model=model_name,
-            api_key=api_key,
-            timeout=timeout,
-            max_retries=0,
-        ))
+            model_name = os.getenv("WORDPILOT_LLM_MODEL", "qwen2.5:7b")
+            return LangChainPlanningProvider(ChatOllama(
+                model=model_name,
+                base_url=os.getenv("WORDPILOT_OLLAMA_BASE_URL", "http://localhost:11434"),
+                temperature=0,
+                validate_model_on_init=False,
+                client_kwargs={"timeout": timeout},
+            ))
+        if provider_name == "openai":
+            api_key = os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                raise PlanningProviderError("OPENAI_API_KEY is required when WORDPILOT_LLM_PROVIDER=openai.")
+            from langchain_openai import ChatOpenAI
+
+            model_name = os.getenv("WORDPILOT_LLM_MODEL", "gpt-4o-mini")
+            return LangChainPlanningProvider(ChatOpenAI(
+                model=model_name,
+                api_key=api_key,
+                timeout=timeout,
+                max_retries=0,
+            ))
+        raise PlanningProviderError(
+            "Unknown WORDPILOT_LLM_PROVIDER. Choose 'ollama' or 'openai'."
+        )
+    except PlanningProviderError:
+        raise
     except Exception as exc:
-        raise PlanningProviderError(f"Could not configure planning model: {exc}") from exc
+        raise PlanningProviderError("Could not configure the selected planning model.") from None
