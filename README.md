@@ -35,6 +35,12 @@ print(result["workflow_status"], result["output_path"], result["final_response"]
 
 The graph inspects first, validates the full operation list before any edits, then runs operations sequentially through the fixed tools. Each run writes to a unique output filename in the configured directory; the source document is never used as the output. A failure before edits produces `failed` with no output. A failure after one or more successful edits produces `partial` and points to the valid partial output. Validation errors prevent all editing. Run the complete tests with `python -m pytest -q`; no LLM or external API is needed.
 
+## LLM operation planning
+
+`OperationPlanner` (or `plan_operations`) turns a user instruction and the JSON-friendly result of `inspect_document` into a `PlanningResult`. Proposed operation dictionaries are validated again against the existing strict Pydantic operation union. The result can instead request clarification or report an unsupported request, with no operations in either case. Repeated or absent exact targets detected in host-side summary checks become clarification requests. Planning does not execute document tools or receive filesystem access.
+
+The default provider uses LangChain `ChatOpenAI` structured output. Configure `OPENAI_API_KEY`, `WORDPILOT_LLM_MODEL` (default `gpt-4o-mini`), and `WORDPILOT_LLM_TIMEOUT_SECONDS` (default `30`); see `.env.example`. The provider has no automatic retries. Unit tests inject a mock provider and make no external API calls. Planning is not connected to the deterministic editing graph.
+
 ## Replacement approach
 
 `replace_text` scans body paragraphs and table-cell paragraphs in document order. It groups adjacent runs only when they contain paragraph run properties and text nodes. It changes the underlying `w:t` nodes directly, leaving the run elements, paragraph properties, and other XML in place. Text spanning multiple runs is placed in the first matched run, so it inherits that run's formatting. A run containing a drawing, field, break, or other non-text element forms a hard boundary. Missing targets return zero replacements and do not save the document.
