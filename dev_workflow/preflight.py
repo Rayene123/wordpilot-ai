@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import json
 import tempfile
 import uuid
@@ -44,6 +45,13 @@ def _preflight_proposal(marker_path: str, marker_contents: str) -> TaskProposal:
         )],
         testing_strategy=["The host checks exact marker contents and validates the complete diff."],
     )
+
+
+def _expected_marker_diff(marker_path: str, marker_contents: str) -> str:
+    return "".join(difflib.unified_diff(
+        [], marker_contents.splitlines(keepends=True),
+        fromfile="/dev/null", tofile=f"b/{marker_path}",
+    ))
 
 
 def run_write_capability_preflight(
@@ -112,6 +120,7 @@ def run_write_capability_preflight(
                 and len(diff.changed_files) == 1
                 and diff.changed_files[0].path == marker_path
                 and diff.changed_files[0].action == "create"
+                and diff.diff == _expected_marker_diff(marker_path, marker_contents)
             )
         except Exception:
             diff = DiffReport(

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from copy import deepcopy
 from datetime import datetime, timezone
-from pathlib import PurePosixPath, PureWindowsPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Literal
 
 from pydantic import (
@@ -14,8 +15,14 @@ from pydantic import (
     ConfigDict,
     Field,
     StrictInt,
+    StrictStr,
     field_validator,
     model_validator,
+)
+
+_SECRET_LIKE = re.compile(
+    r"(?i)(?:\b[A-Z0-9_]*(?:API_KEY|TOKEN|SECRET|PASSWORD)\s*[=:]\s*\S+|"
+    r"\bBearer\s+[A-Za-z0-9._~+/=-]+|\bsk-[A-Za-z0-9_-]{12,})"
 )
 
 
@@ -305,6 +312,111 @@ class DiffReport(BaseModel):
     diff: str = ""
     errors: list[str] = Field(default_factory=list)
     worktree_path: str | None = None
+
+
+class VerificationCheckResult(BaseModel):
+    """Bounded evidence for one host-configured verification check."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    check_id: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+    display_name: str = Field(min_length=1, max_length=160)
+    command_identity: list[StrictStr] = Field(min_length=1, max_length=32)
+    working_directory: Literal["repository", "worktree"]
+    working_directory_identity: StrictStr | None = Field(default=None, min_length=1, max_length=2_048)
+    status: Literal["passed", "failed", "timed_out", "not_run"]
+    exit_code: StrictInt | None = None
+    duration_seconds: float = Field(ge=0, le=86_400)
+    stdout: str = Field(default="", max_length=8_192)
+    stderr: str = Field(default="", max_length=8_192)
+    stdout_truncated: bool = False
+    stderr_truncated: bool = False
+
+    @field_validator("command_identity")
+    @classmethod
+    def validate_command_identity(cls, value: list[str]) -> list[str]:
+        if not value or any(not isinstance(part, str) or not part or len(part) > 2_048 for part in value):
+            raise ValueError("Command identity must contain non-empty bounded arguments.")
+        if sum(len(part) for part in value) > 8_192:
+            raise ValueError("Command identity exceeds the configured size limit.")
+        if any(_SECRET_LIKE.search(part) for part in value):
+            raise ValueError("Command identity cannot contain secret-like values.")
+        return value
+
+    @field_validator("stdout", "stderr")
+    @classmethod
+    def reject_secret_like_output(cls, value: str) -> str:
+        if _SECRET_LIKE.search(value):
+            raise ValueError("Verification output must be redacted before it is stored.")
+        return value
+
+    @model_validator(mode="after")
+    def validate_outcome(self) -> "VerificationCheckResult":
+        if self.status == "passed" and self.exit_code != 0:
+            raise ValueError("A passed check must have exit code zero.")
+        if self.status == "timed_out" and self.exit_code is not None:
+            raise ValueError("A timed-out check cannot claim an exit code.")
+        if self.status == "not_run" and (self.exit_code is not None or self.duration_seconds != 0):
+            raise ValueError("A not-run check cannot have an exit code or execution duration.")
+        return self
+
+
+class FinalReport(BaseModel):
+    """Serializable, evidence-based summary of one DevFlow run."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    run_id: str = Field(min_length=1, max_length=80)
+    overall_status: Literal["passed", "failed", "rejected", "awaiting_approval"]
+    task_summary: str = Field(min_length=1, max_length=2_000)
+    approved_proposal_fingerprint: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    proposal_revision: StrictInt = Field(ge=0)
+    human_decisions: list[WorkflowDecision] = Field(default_factory=list, max_length=20)
+    implementation_status: Literal["succeeded", "failed", "timed_out", "not_run"]
+    changed_files: list[ChangedFile] = Field(default_factory=list, max_length=500)
+    diff_validation_status: Literal["valid", "invalid", "empty", "not_collected"]
+    verification_results: list[VerificationCheckResult] = Field(default_factory=list, max_length=100)
+    failures: list[str] = Field(default_factory=list, max_length=100)
+    remaining_risks: list[str] = Field(default_factory=list, max_length=100)
+    evidence_references: list[str] = Field(default_factory=list, max_length=100)
+
+    @field_validator("failures", "remaining_risks", "evidence_references")
+    @classmethod
+    def validate_report_entries(cls, values: list[str]) -> list[str]:
+        if any(not value.strip() or len(value) > 2_048 for value in values):
+            raise ValueError("Report entries must be non-empty and bounded.")
+        return values
+
+    @field_validator("evidence_references")
+    @classmethod
+    def validate_evidence_references(cls, values: list[str]) -> list[str]:
+        for value in values:
+            path = Path(value)
+            windows_path = PureWindowsPath(value)
+            if (
+                path.is_absolute()
+                or windows_path.is_absolute()
+                or windows_path.drive
+                or ".." in path.parts
+                or ".." in windows_path.parts
+                or "\x00" in value
+            ):
+                raise ValueError("Evidence references must be safe relative identities.")
+        return values
+
+    @model_validator(mode="after")
+    def validate_report_outcome(self) -> "FinalReport":
+        if self.overall_status == "passed" and (
+            self.implementation_status != "succeeded"
+            or self.diff_validation_status != "valid"
+            or not self.verification_results
+            or any(result.status != "passed" for result in self.verification_results)
+            or self.failures
+        ):
+            raise ValueError("A passing report requires successful implementation, valid diff, and passing checks.")
+        if self.overall_status == "rejected" and self.implementation_status != "not_run":
+            raise ValueError("A rejected report must not claim implementation ran.")
+        return self
 
 
 class WriteCapabilityPreflightResult(BaseModel):

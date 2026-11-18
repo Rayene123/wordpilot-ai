@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+import subprocess
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
@@ -15,8 +16,20 @@ from dev_workflow.schemas import (
     CodexExecutionResult,
     DiffReport,
     TaskProposal,
+    VerificationCheckResult,
     new_workflow_decision,
 )
+from dev_workflow.worktree import create_worktree
+
+
+def _passing_checks(worktree):
+    return [VerificationCheckResult(
+        check_id=check_id, display_name=check_id,
+        command_identity=["python", "-m", "pytest", "-q"] if check_id == "python.tests" else ["npm", "run", "typecheck"],
+        working_directory="worktree",
+        working_directory_identity="." if check_id == "python.tests" else "frontend",
+        status="passed", exit_code=0, duration_seconds=0.1,
+    ) for check_id in ("python.tests", "frontend.typecheck")]
 
 
 def _proposal(summary: str) -> TaskProposal:
@@ -48,6 +61,12 @@ def _callbacks(tmp_path, first: TaskProposal, revised: TaskProposal):
     target = tmp_path / "backend" / "api.py"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("existing", encoding="utf-8")
+    (tmp_path / ".gitignore").write_text(".devflow-worktrees/\n", encoding="utf-8")
+    subprocess.run(["git", "init", "--quiet", str(tmp_path)], check=True, shell=False)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "devflow-test@example.invalid"], check=True, shell=False)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "DevFlow Test"], check=True, shell=False)
+    subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True, shell=False)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "--quiet", "-m", "base"], check=True, shell=False)
     implementations = []
 
     def analyzer(task, repository, *, feedback=None, previous_proposal=None):
@@ -64,7 +83,7 @@ def _callbacks(tmp_path, first: TaskProposal, revised: TaskProposal):
         )
 
     def worktree_creator(repository, run_id):
-        return str(tmp_path / ".devflow-worktrees" / run_id)
+        return create_worktree(repository, run_id)
 
     return analyzer, implementer, worktree_creator, diff_collector, implementations
 
@@ -79,7 +98,8 @@ def _reach_revision_one_pause(tmp_path, database):
     with open_sqlite_checkpointer(database) as saver:
         graph = build_dev_workflow(
             analyzer=analyzer, implementer=implementer, worktree_creator=worktree_creator,
-            diff_collector=diff_collector, checkpointer=saver, max_plan_revisions=1,
+            diff_collector=diff_collector, verification_runner=_passing_checks,
+            checkpointer=saver, max_plan_revisions=1,
         )
         first_result = graph.invoke(state, config)
         assert first_result["final_status"] == "awaiting_approval"
@@ -92,6 +112,95 @@ def _reach_revision_one_pause(tmp_path, database):
     return state["run_id"], first, revised, callbacks, implementations
 
 
+def _recovery_dependencies(tmp_path, database):
+    proposal = _proposal("Crash recovery proposal.")
+    callbacks = _callbacks(tmp_path, proposal, proposal)
+    analyzer, implementer, worktree_creator, diff_collector, implementations = callbacks
+    verification_calls = []
+
+    def verifier(worktree):
+        verification_calls.append(worktree)
+        return _passing_checks(worktree)
+
+    state = new_workflow_state("Recover a checkpoint safely.", tmp_path)
+    config = workflow_config(state["run_id"])
+
+    def build(saver):
+        return build_dev_workflow(
+            analyzer=analyzer, implementer=implementer,
+            worktree_creator=worktree_creator, diff_collector=diff_collector,
+            verification_runner=verifier, checkpointer=saver,
+        )
+
+    return state, config, proposal, implementations, verification_calls, build
+
+
+@pytest.mark.parametrize(
+    ("checkpoint_after", "expected_next"),
+    [
+        ("request_approval", "implement_approved_proposal"),
+        ("implement_approved_proposal", "verify_implementation"),
+        ("verify_implementation", "build_final_report"),
+    ],
+)
+def test_sqlite_resume_does_not_repeat_completed_stages(
+    tmp_path, checkpoint_after, expected_next,
+):
+    database = tmp_path / ".devflow" / "recovery.sqlite3"
+    state, config, proposal, implementations, verification_calls, build = _recovery_dependencies(
+        tmp_path, database,
+    )
+    approval = new_workflow_decision(proposal, action="approve").model_dump(mode="json")
+
+    with open_sqlite_checkpointer(database) as saver:
+        graph = build(saver)
+        paused = graph.invoke(state, config)
+        assert paused["final_status"] == "awaiting_approval"
+
+        stream = graph.stream(
+            Command(resume=approval), config, stream_mode="updates",
+        )
+        for update in stream:
+            if checkpoint_after in update:
+                break
+        else:
+            pytest.fail(f"Workflow did not reach checkpoint boundary {checkpoint_after!r}.")
+        stream.close()
+
+        snapshot = graph.get_state(config)
+        assert snapshot.next == (expected_next,)
+        assert snapshot.values["final_report"] is None
+        assert snapshot.values["decisions"][-1]["action"] == "approve"
+        if checkpoint_after == "request_approval":
+            assert snapshot.values["current_stage"] == "approved"
+            assert implementations == []
+            assert verification_calls == []
+        elif checkpoint_after == "implement_approved_proposal":
+            assert snapshot.values["execution_result"]["status"] == "succeeded"
+            assert snapshot.values["diff_report"]["status"] == "valid"
+            assert len(implementations) == 1
+            assert verification_calls == []
+        else:
+            assert len(implementations) == 1
+            assert len(verification_calls) == 1
+            assert {item["status"] for item in snapshot.values["verification_results"]} == {"passed"}
+
+    # Reopening the SQLite saver simulates a process restart at the node boundary.
+    with open_sqlite_checkpointer(database) as saver:
+        resumed_graph = build(saver)
+        result = resumed_graph.invoke(None, config)
+        final_state = resumed_graph.get_state(config).values
+
+    assert result["final_status"] == "passed"
+    assert final_state["final_report"]["overall_status"] == "passed"
+    assert final_state["final_report"]["implementation_status"] == "succeeded"
+    assert final_state["final_report"]["diff_validation_status"] == "valid"
+    assert {item["status"] for item in final_state["final_report"]["verification_results"]} == {"passed"}
+    assert len(final_state["decisions"]) == 1
+    assert len(implementations) == 1
+    assert len(verification_calls) == 1
+
+
 def test_sqlite_checkpoint_survives_closed_saver_and_resumes_same_interrupt(tmp_path):
     database = tmp_path / ".devflow" / "checkpoints.sqlite3"
     run_id, first, revised, callbacks, implementations = _reach_revision_one_pause(tmp_path, database)
@@ -100,7 +209,8 @@ def test_sqlite_checkpoint_survives_closed_saver_and_resumes_same_interrupt(tmp_
     with open_sqlite_checkpointer(database) as saver:
         graph = build_dev_workflow(
             analyzer=analyzer, implementer=implementer, worktree_creator=worktree_creator,
-            diff_collector=diff_collector, checkpointer=saver, max_plan_revisions=1,
+            diff_collector=diff_collector, verification_runner=_passing_checks,
+            checkpointer=saver, max_plan_revisions=1,
         )
         config = workflow_config(run_id)
         snapshot = graph.get_state(config)
@@ -118,7 +228,8 @@ def test_sqlite_checkpoint_survives_closed_saver_and_resumes_same_interrupt(tmp_
         ).model_dump(mode="json")
         result = resume_pending_approval(graph, run_id, approval)
 
-    assert result["final_status"] == "implemented"
+    assert result["final_status"] == "passed"
+    assert result["final_report"]["overall_status"] == "passed"
     assert result["decisions"][-1]["proposal_revision"] == 1
     assert len(implementations) == 1
     assert implementations[0][1] == result["proposal_fingerprint"]
@@ -139,7 +250,8 @@ def test_invalid_or_stale_resume_keeps_sqlite_approval_interrupt_pending(tmp_pat
     with open_sqlite_checkpointer(database) as saver:
         graph = build_dev_workflow(
             analyzer=analyzer, implementer=implementer, worktree_creator=worktree_creator,
-            diff_collector=diff_collector, checkpointer=saver, max_plan_revisions=1,
+            diff_collector=diff_collector, verification_runner=_passing_checks,
+            checkpointer=saver, max_plan_revisions=1,
         )
         config = workflow_config(run_id)
         with pytest.raises(ApprovalResumeError):
@@ -189,6 +301,37 @@ def test_incompatible_saved_revision_is_rejected_before_interrupt_resume(tmp_pat
             revised, action="approve", proposal_revision=1,
         ).model_dump(mode="json")
         with pytest.raises(ApprovalResumeError, match="interrupt is missing or ambiguous"):
+            resume_pending_approval(graph, run_id, approval)
+
+    assert not implementations
+
+
+def test_altered_saved_proposal_cannot_be_approved_or_implemented(tmp_path):
+    database = tmp_path / "altered.sqlite3"
+    run_id, _, revised, callbacks, implementations = _reach_revision_one_pause(tmp_path, database)
+    analyzer, implementer, worktree_creator, diff_collector, _ = callbacks
+    altered = revised.model_copy(update={"task_summary": "Altered after review."})
+
+    with open_sqlite_checkpointer(database) as saver:
+        graph = build_dev_workflow(
+            analyzer=analyzer, implementer=implementer, worktree_creator=worktree_creator,
+            diff_collector=diff_collector, verification_runner=_passing_checks,
+            checkpointer=saver, max_plan_revisions=1,
+        )
+        config = workflow_config(run_id)
+        graph.update_state(config, {"proposal": altered.model_dump(mode="json")})
+
+    approval = new_workflow_decision(
+        altered, action="approve", proposal_revision=1,
+    ).model_dump(mode="json")
+    with open_sqlite_checkpointer(database) as saver:
+        graph = build_dev_workflow(
+            analyzer=analyzer, implementer=implementer, worktree_creator=worktree_creator,
+            diff_collector=diff_collector, verification_runner=_passing_checks,
+            checkpointer=saver, max_plan_revisions=1,
+        )
+        assert graph.get_state(workflow_config(run_id)).values["proposal"] == altered.model_dump(mode="json")
+        with pytest.raises(ApprovalResumeError):
             resume_pending_approval(graph, run_id, approval)
 
     assert not implementations

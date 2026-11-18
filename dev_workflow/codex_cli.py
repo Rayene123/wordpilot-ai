@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -28,12 +29,32 @@ _OPENAI_KEY = re.compile(r"\bsk-[A-Za-z0-9_-]{12,}\b")
 _EXECUTION_FAILURE_PATTERNS = (
     re.compile(r"\bblocked by policy\b", re.IGNORECASE),
     re.compile(r"\brejected\s*\([^\n]{0,300}blocked by policy", re.IGNORECASE),
+    re.compile(r"\b(?:rejected|blocked|denied)\b.{0,100}\bby\b.{0,40}\b(?:environment\s+|execution\s+|security\s+)?policy\b", re.IGNORECASE | re.DOTALL),
+    re.compile(r"\bpolicy\b.{0,100}\b(?:rejected|blocked|denied)\b", re.IGNORECASE | re.DOTALL),
     re.compile(r"\bsandbox\b.{0,100}\b(?:denied|rejected|blocked|read[- ]only)\b", re.IGNORECASE | re.DOTALL),
     re.compile(r"\b(?:workspace|filesystem|file system)\b.{0,100}\b(?:mounted\s+)?read[- ]only\b", re.IGNORECASE | re.DOTALL),
     re.compile(r"\b(?:read[- ]only|readonly)\b.{0,100}\b(?:workspace|filesystem|file system)\b", re.IGNORECASE | re.DOTALL),
     re.compile(r"\b(?:write|writing|create|modify|edit)\b.{0,100}\b(?:blocked|denied|not permitted|read[- ]only)\b", re.IGNORECASE | re.DOTALL),
     re.compile(r"\b(?:permission denied|operation not permitted)\b", re.IGNORECASE),
 )
+
+
+def resolve_codex_executable(executable: str = "codex") -> tuple[str | None, str | None]:
+    """Resolve Codex from explicit host configuration, then PATH."""
+    configured = os.environ.get("CODEX_CLI_PATH", "").strip()
+    if configured:
+        candidate = Path(configured).expanduser()
+        if candidate.is_file():
+            return str(candidate.resolve()), None
+        configured_error = "CODEX_CLI_PATH does not point to an existing executable file."
+    else:
+        configured_error = None
+    found = shutil.which(executable)
+    if found:
+        return found, None
+    if configured_error:
+        return None, f"{configured_error} Set CODEX_CLI_PATH to a valid codex executable or add Codex CLI to PATH."
+    return None, "Codex CLI was not found. Set CODEX_CLI_PATH to its executable or add Codex CLI to PATH."
 
 
 def _supports_cli(
@@ -147,7 +168,7 @@ def analyze_task(
     if not repository.is_dir():
         raise ValueError("Repository path must be an existing directory.")
 
-    resolved_executable = shutil.which(executable)
+    resolved_executable, resolution_error = resolve_codex_executable(executable)
     command = [
         resolved_executable or executable,
         "exec", "--ephemeral", "--ignore-user-config", "--sandbox", "read-only",
@@ -158,7 +179,7 @@ def analyze_task(
     if resolved_executable is None:
         result = _result(
             command, started=started, status="failed", exit_code=None,
-            error="Codex CLI executable was not found.",
+            error=resolution_error,
         )
         return result, None
     if not _supports_cli(
@@ -296,7 +317,7 @@ def implement_approved_plan(
         raise ValueError("Implementation requires the exact approved proposal in a DevFlow worktree.")
     if not _validate_worktree_root(directory):
         raise ValueError("Implementation directory is not under the expected repository worktree root.")
-    resolved = shutil.which(executable)
+    resolved, resolution_error = resolve_codex_executable(executable)
     # This CLI version exposes no --ask-for-approval option. The workflow's
     # fingerprint-bound human gate remains mandatory, and the required sandbox
     # is capability-checked below; never substitute auto-approval or bypass flags.
@@ -308,7 +329,7 @@ def implement_approved_plan(
     started = time.monotonic()
     if resolved is None:
         return _result(command, started=started, status="failed", exit_code=None,
-                       error="Codex CLI executable was not found.")
+                       error=resolution_error)
     if not _supports_cli(
         resolved, ("exec", "--help"),
         required_options=("--ephemeral", "--ignore-user-config", "--sandbox", "--json",
@@ -378,7 +399,7 @@ def review_worktree(
         raise ValueError("timeout_seconds must be positive.")
     if fingerprint != proposal_fingerprint(proposal, revision=proposal_revision) or not _validate_worktree_root(directory):
         raise ValueError("Review requires the exact approved proposal and a DevFlow worktree.")
-    resolved = shutil.which(executable)
+    resolved, resolution_error = resolve_codex_executable(executable)
     command = [
         resolved or executable, "exec", "review", "--ephemeral", "--ignore-user-config",
         "--uncommitted", "--json", "--output-last-message", "<temporary-last-message.txt>", "-",
@@ -386,7 +407,7 @@ def review_worktree(
     started = time.monotonic()
     if resolved is None:
         return _result(command, started=started, status="failed", exit_code=None,
-                       error="Codex CLI executable was not found.")
+                       error=resolution_error)
     if not _supports_cli(
         resolved, ("exec", "review", "--help"),
         required_options=("--ephemeral", "--ignore-user-config", "--uncommitted",

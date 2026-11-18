@@ -6,7 +6,8 @@ import pytest
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from dev_workflow.schemas import (
-    FileScope, TaskProposal, WorkflowDecision, codex_strict_json_schema, new_workflow_decision,
+    FileScope, FinalReport, TaskProposal, VerificationCheckResult, WorkflowDecision,
+    codex_strict_json_schema, new_workflow_decision,
     proposal_fingerprint, validate_decision_for_proposal,
 )
 
@@ -157,3 +158,47 @@ def test_decisions_are_timezone_aware_and_bound_to_exact_proposal():
                          proposal_revision=0, decision_timestamp=datetime(2026, 11, 17))
     with pytest.raises(ValidationError):
         new_workflow_decision(proposal, action="request_changes")
+
+
+def test_verification_result_is_strict_bounded_and_json_serializable():
+    result = VerificationCheckResult(
+        check_id="pytest.unit", display_name="Unit tests",
+        command_identity=["python", "-m", "pytest", "-q"],
+        working_directory="worktree", status="passed", exit_code=0,
+        duration_seconds=12.5, stdout="12 passed", stderr="",
+        stdout_truncated=False, stderr_truncated=False,
+    )
+    assert result.model_dump(mode="json")["status"] == "passed"
+    with pytest.raises(ValidationError):
+        VerificationCheckResult.model_validate({**result.model_dump(), "unexpected": True})
+    with pytest.raises(ValidationError):
+        VerificationCheckResult.model_validate({**result.model_dump(), "status": "passed", "exit_code": 1})
+    with pytest.raises(ValidationError):
+        VerificationCheckResult.model_validate({**result.model_dump(), "stdout": "x" * 8_193})
+    with pytest.raises(ValidationError):
+        VerificationCheckResult.model_validate({**result.model_dump(), "working_directory": "../../outside"})
+
+
+def test_final_report_requires_evidence_consistent_with_pass_status():
+    proposal = _proposal()
+    decision = new_workflow_decision(proposal, action="approve")
+    check = VerificationCheckResult(
+        check_id="pytest", display_name="Tests", command_identity=["python", "-m", "pytest"],
+        working_directory="worktree", status="passed", exit_code=0,
+        duration_seconds=1, stdout="ok", stderr="",
+    )
+    report = FinalReport(
+        run_id="run-123", overall_status="passed", task_summary=proposal.task_summary,
+        approved_proposal_fingerprint=decision.proposal_fingerprint, proposal_revision=0,
+        human_decisions=[decision], implementation_status="succeeded",
+        changed_files=[{"path": "backend/api.py", "action": "modify"}],
+        diff_validation_status="valid", verification_results=[check],
+        evidence_references=["evidence/run-123.json"],
+    )
+    assert report.model_dump(mode="json")["verification_results"][0]["check_id"] == "pytest"
+    with pytest.raises(ValidationError):
+        FinalReport.model_validate({**report.model_dump(), "unexpected": True})
+    with pytest.raises(ValidationError):
+        FinalReport.model_validate({**report.model_dump(), "verification_results": []})
+    with pytest.raises(ValidationError):
+        FinalReport.model_validate({**report.model_dump(), "evidence_references": ["../secret.txt"]})

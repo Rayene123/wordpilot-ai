@@ -65,9 +65,43 @@ def _fake_run_factory(*, returncode=0, message=None, stdout="event", stderr=""):
 
 
 def _setup(monkeypatch, tmp_path, fake_run):
+    monkeypatch.delenv("CODEX_CLI_PATH", raising=False)
     monkeypatch.setattr(codex_cli.shutil, "which", lambda _: "C:/tools/codex.exe")
     monkeypatch.setattr(codex_cli.subprocess, "run", fake_run)
     return tmp_path
+
+
+def test_explicit_executable_path_takes_priority(monkeypatch, tmp_path):
+    executable = tmp_path / "bundled-codex.exe"
+    executable.write_bytes(b"fake executable")
+    monkeypatch.setenv("CODEX_CLI_PATH", str(executable))
+    monkeypatch.setattr(codex_cli.shutil, "which", lambda _: "C:/tools/path-codex.exe")
+
+    resolved, error = codex_cli.resolve_codex_executable()
+
+    assert resolved == str(executable.resolve())
+    assert error is None
+
+
+def test_invalid_configured_path_uses_path_fallback(monkeypatch, tmp_path):
+    monkeypatch.setenv("CODEX_CLI_PATH", str(tmp_path / "missing.exe"))
+    monkeypatch.setattr(codex_cli.shutil, "which", lambda _: "C:/tools/path-codex.exe")
+
+    resolved, error = codex_cli.resolve_codex_executable()
+
+    assert resolved == "C:/tools/path-codex.exe"
+    assert error is None
+
+
+def test_missing_configured_and_path_executable_has_actionable_error(monkeypatch, tmp_path):
+    monkeypatch.setenv("CODEX_CLI_PATH", str(tmp_path / "missing.exe"))
+    monkeypatch.setattr(codex_cli.shutil, "which", lambda _: None)
+
+    resolved, error = codex_cli.resolve_codex_executable()
+
+    assert resolved is None
+    assert "CODEX_CLI_PATH" in error
+    assert "PATH" in error
 
 
 def test_success_uses_read_only_cli_stdin_and_explicit_working_directory(monkeypatch, tmp_path):
@@ -150,6 +184,39 @@ def test_implementation_uses_workspace_write_only_in_supplied_worktree(monkeypat
     assert captured["help_commands"] == [["C:/tools/codex.exe", "exec", "--help"]]
 
 
+@pytest.mark.parametrize("output", [
+    '{"type":"item.completed","item":{"type":"agent_message","text":"The workspace is mounted read-only."}}',
+    '{"type":"item.completed","item":{"type":"command_execution","error":"Rejected: blocked by policy"}}',
+    "Codex sandbox rejected the write request.",
+    "Permission denied while creating the approved file.",
+    "PowerShell command rejected by environment policy.",
+    '{"error":"environment policy blocked command execution","exit_code":0}',
+])
+def test_explicit_execution_failures_are_detected_despite_zero_exit(output):
+    assert codex_cli._explicit_execution_failure(output) is not None
+
+
+def test_implementation_marks_zero_exit_policy_rejection_failed(monkeypatch, tmp_path):
+    root = tmp_path / "repo"
+    worktree = root / ".devflow-worktrees" / "run"
+    worktree.mkdir(parents=True)
+    proposal = TaskProposal.model_validate(json.loads(_proposal_json()))
+    fake_run, _ = _fake_run_factory(
+        returncode=0,
+        message="I could not create the file because the workspace is mounted read-only.",
+        stdout='{"type":"item.completed","item":{"type":"agent_message","text":"No files changed."}}',
+        stderr='CreateProcess rejected: blocked by policy',
+    )
+    _setup(monkeypatch, tmp_path, fake_run)
+    monkeypatch.setattr(codex_cli, "_validate_worktree_root", lambda _: True)
+    result = codex_cli.implement_approved_plan(
+        proposal, proposal_fingerprint(proposal), worktree,
+    )
+    assert result.exit_code == 0
+    assert result.status == "failed"
+    assert "blocked by the active sandbox or policy" in result.error
+
+
 def test_unsupported_workspace_write_capability_fails_closed(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path, lambda *args, **kwargs: None)
     worktree = tmp_path / "repo" / ".devflow-worktrees" / "run"
@@ -195,6 +262,7 @@ def test_review_uses_review_specific_supported_argument_list(monkeypatch, tmp_pa
 
 
 def test_missing_executable_returns_safe_failure(monkeypatch, tmp_path):
+    monkeypatch.delenv("CODEX_CLI_PATH", raising=False)
     monkeypatch.setattr(codex_cli.shutil, "which", lambda _: None)
     result, proposal = codex_cli.analyze_task("Task", tmp_path)
     assert result.status == "failed"

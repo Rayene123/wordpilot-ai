@@ -14,14 +14,14 @@ from langgraph.types import interrupt
 from pydantic import ValidationError
 
 from .codex_cli import analyze_task as run_codex_analysis, implement_approved_plan
-from .preflight import run_write_capability_preflight
 from .schemas import (
-    CodexExecutionResult, DiffReport, TaskProposal, WorkflowDecision,
-    WriteCapabilityPreflightResult,
+    CodexExecutionResult, DiffReport, TaskProposal, VerificationCheckResult, WorkflowDecision,
     proposal_fingerprint, validate_decision_for_proposal,
 )
+from .reporting import build_final_report
 from .state import DevWorkflowState
-from .worktree import collect_worktree_diff, create_worktree
+from .verification import DEFAULT_CHECKS, run_verification
+from .worktree import collect_worktree_diff, create_worktree, diff_identity, validate_registered_worktree
 
 Analyzer = Callable[..., tuple[CodexExecutionResult, TaskProposal | Mapping[str, Any] | None]]
 
@@ -44,8 +44,8 @@ def new_workflow_state(
         "decisions": [], "proposal_history": [], "revision_count": 0,
         "max_plan_revisions": max_plan_revisions, "revision_feedback": None,
         "analysis_evidence": None, "execution_result": None,
-        "worktree_path": None, "diff_report": None, "preflight_result": None,
-        "validation_errors": [],
+        "worktree_path": None, "diff_report": None, "verification_results": [],
+        "final_report": None, "validation_errors": [],
         "final_status": "pending",
     }
 
@@ -61,7 +61,7 @@ def build_dev_workflow(
     implementer: Callable[..., CodexExecutionResult] = implement_approved_plan,
     worktree_creator: Callable[..., str] = create_worktree,
     diff_collector: Callable[..., DiffReport] = collect_worktree_diff,
-    preflight_runner: Callable[..., WriteCapabilityPreflightResult | Mapping[str, Any]] = run_write_capability_preflight,
+    verification_runner: Callable[[str], list[VerificationCheckResult]] = run_verification,
     checkpointer: BaseCheckpointSaver | None = None,
     max_plan_revisions: int = 2,
 ) -> Any:
@@ -162,7 +162,6 @@ def build_dev_workflow(
         return {"current_stage": "approved", "final_status": "approved", "decisions": history, "errors": []}
 
     def implement_node(state: DevWorkflowState) -> dict[str, Any]:
-        preflight_value: dict[str, Any] | None = None
         try:
             proposal = TaskProposal.model_validate(state.get("proposal"))
             decision = WorkflowDecision.model_validate((state.get("decisions") or [])[-1])
@@ -179,19 +178,9 @@ def build_dev_workflow(
                 for item in proposal.expected_files
             ):
                 raise ValueError("Approved file scope is unsafe.")
-            preflight = WriteCapabilityPreflightResult.model_validate(
-                preflight_runner(
-                    state["repository_path"], implementer=implementer,
-                    worktree_creator=worktree_creator, diff_collector=diff_collector,
-                )
+            worktree = validate_registered_worktree(
+                state["repository_path"], worktree_creator(state["repository_path"], state["run_id"]),
             )
-            preflight_value = preflight.model_dump(mode="json")
-            if preflight.status != "passed":
-                return _fail(
-                    "Workspace-write preflight failed; task implementation was not started.",
-                    preflight_result=preflight_value,
-                )
-            worktree = worktree_creator(state["repository_path"], state["run_id"])
             result = CodexExecutionResult.model_validate(
                 implementer(
                     proposal, state["proposal_fingerprint"], worktree,
@@ -202,33 +191,98 @@ def build_dev_workflow(
             if diff.status != "valid":
                 return {"current_stage": "failed", "final_status": "failed", "worktree_path": worktree,
                         "execution_result": result.model_dump(mode="json"), "diff_report": diff.model_dump(mode="json"),
-                        "preflight_result": preflight_value,
                         "errors": ["Implementation diff failed scope validation."]}
             status = "implemented" if result.status == "succeeded" else "failed"
             return {"current_stage": status, "final_status": status, "worktree_path": worktree,
                     "execution_result": result.model_dump(mode="json"), "diff_report": diff.model_dump(mode="json"),
-                    "preflight_result": preflight_value,
                     "errors": [] if status == "implemented" else ["Codex implementation failed."]}
         except Exception:
-            return _fail("Approved implementation could not be completed safely.", preflight_result=preflight_value)
+            return _fail("Approved implementation could not be completed safely.")
+
+    def verification_node(state: DevWorkflowState) -> dict[str, Any]:
+        try:
+            worktree = validate_registered_worktree(state["repository_path"], state["worktree_path"])
+            before = diff_identity(worktree)
+            results = _validate_verification_results(verification_runner(worktree))
+            after = diff_identity(worktree)
+            if before != after:
+                raise ValueError("Worktree changed while verification was running.")
+        except Exception:
+            return {"verification_results": [], "errors": [*state.get("errors", []), "Host verification could not be completed safely."]}
+        return {"verification_results": [item.model_dump(mode="json") for item in results]}
+
+    def report_node(state: DevWorkflowState) -> dict[str, Any]:
+        try:
+            report_state: Mapping[str, Any] = state
+            if state.get("current_stage") == "implemented" or state.get("verification_results"):
+                try:
+                    verified = _validate_verification_results(state.get("verification_results", []))
+                    report_state = {**state, "verification_results": [item.model_dump(mode="json") for item in verified]}
+                except (TypeError, ValueError, ValidationError):
+                    report_state = {
+                        **state, "verification_results": [],
+                        "errors": [*state.get("errors", []), "Verification evidence did not match host configuration."],
+                    }
+            report = build_final_report(
+                report_state, required_check_ids=[check.check_id for check in DEFAULT_CHECKS],
+            )
+        except Exception:
+            return {"current_stage": "failed", "final_status": "failed",
+                    "errors": [*state.get("errors", []), "A final report could not be constructed from workflow evidence."]}
+        status = {"passed": "implemented", "rejected": "rejected",
+                  "awaiting_approval": "awaiting_approval", "failed": "failed"}[report.overall_status]
+        return {"final_report": report.model_dump(mode="json"), "final_status": report.overall_status,
+                "current_stage": status}
 
     builder = StateGraph(DevWorkflowState)
     builder.add_node("analyze_task", analyze_node)
     builder.add_node("validate_proposal", validate_node)
     builder.add_node("request_approval", approval_node)
     builder.add_node("implement_approved_proposal", implement_node)
+    builder.add_node("verify_implementation", verification_node)
+    builder.add_node("build_final_report", report_node)
     builder.add_edge(START, "analyze_task")
-    builder.add_conditional_edges("analyze_task", lambda s: "validate_proposal" if s.get("current_stage") == "analysis_completed" else END)
-    builder.add_conditional_edges("validate_proposal", lambda s: "request_approval" if s.get("current_stage") == "awaiting_approval" else END)
+    builder.add_conditional_edges("analyze_task", lambda s: "validate_proposal" if s.get("current_stage") == "analysis_completed" else "build_final_report")
+    builder.add_conditional_edges("validate_proposal", lambda s: "request_approval" if s.get("current_stage") == "awaiting_approval" else "build_final_report")
     def route_decision(state: DevWorkflowState) -> str:
         if state.get("current_stage") == "analysis_pending":
             return "analyze_task"
         if state.get("current_stage") == "approved":
             return "implement_approved_proposal"
+        if state.get("current_stage") == "rejected" or state.get("current_stage") == "failed":
+            return "build_final_report"
         return END
     builder.add_conditional_edges("request_approval", route_decision)
-    builder.add_edge("implement_approved_proposal", END)
+    builder.add_conditional_edges(
+        "implement_approved_proposal",
+        lambda s: "verify_implementation" if s.get("current_stage") == "implemented" else "build_final_report",
+    )
+    builder.add_edge("verify_implementation", "build_final_report")
+    builder.add_edge("build_final_report", END)
     return builder.compile(checkpointer=saver)
+
+
+def _validate_verification_results(values: Any) -> list[VerificationCheckResult]:
+    """Require exactly one matching result for every configured host check."""
+    if not isinstance(values, (list, tuple)):
+        raise ValueError("Verification results must be a sequence.")
+    expected = {check.check_id: check for check in DEFAULT_CHECKS}
+    actual: dict[str, VerificationCheckResult] = {}
+    for value in values:
+        result = VerificationCheckResult.model_validate(value)
+        check = expected.get(result.check_id)
+        if check is None or result.check_id in actual:
+            raise ValueError("Verification returned an unexpected or duplicate check.")
+        if (
+            result.command_identity != list(check.arguments)
+            or result.working_directory != "worktree"
+            or result.working_directory_identity != check.working_directory
+        ):
+            raise ValueError("Verification evidence does not match host configuration.")
+        actual[result.check_id] = result
+    if set(actual) != set(expected):
+        raise ValueError("Verification did not return every configured host check.")
+    return [actual[check.check_id] for check in DEFAULT_CHECKS]
 
 
 def _fail(message: str, **extra: Any) -> dict[str, Any]:

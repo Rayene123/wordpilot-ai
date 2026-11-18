@@ -27,7 +27,9 @@ class DevWorkflowState(TypedDict):
     diff_report: NotRequired[dict[str, Any] | None]
     preflight_result: NotRequired[dict[str, Any] | None]
     preflight_result: NotRequired[dict[str, Any] | None]
+    verification_results: NotRequired[list[dict[str, Any]]]
+    final_report: NotRequired[dict[str, Any] | None]
     validation_errors: NotRequired[list[str]]
     final_status: NotRequired[Literal[
-        "pending", "awaiting_approval", "approved", "rejected", "implemented", "failed",
+        "pending", "awaiting_approval", "approved", "rejected", "implemented", "passed", "failed",
     ]]

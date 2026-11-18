@@ -2,6 +2,30 @@
 
 This project provides read-only DOCX inspection and controlled text replacement, paragraph insertion, and paragraph removal in Python 3.11+.
 
+## Quick start
+
+For WordPilot, install dependencies, set up the default Ollama provider, and start the backend from the repository root:
+
+```powershell
+python -m pip install -r requirements.txt
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+ollama pull qwen2.5:7b
+uvicorn backend.api:app --host 127.0.0.1 --port 8000
+```
+
+In another terminal, start the frontend:
+
+```powershell
+cd frontend
+npm ci
+if (-not (Test-Path .env.local)) { Copy-Item .env.example .env.local }
+npm run dev
+```
+
+Upload the existing synthetic sample `therapist_session_notes.docx`, enter the instruction from [`therapist_session_notes_instruction.txt`](therapist_session_notes_instruction.txt), review the proposed operations, and explicitly approve before execution. Inspect the generated DOCX and returned integrity results (`completed_verified`, `completed_partially_verified`, or a reported failure). The sample is a fictional software demonstration fixture, not a clinical template. For Groq setup or details about verification limits, see [LLM operation planning](#llm-operation-planning) and [DOCX integrity verification](#docx-integrity-verification).
+
+DevFlow is an optional, separate development tool; it uses Codex CLI and is not needed to run WordPilot.
+
 ## Install and run
 
 ```powershell
@@ -13,10 +37,10 @@ python -m pytest -q
 
 Install dependencies with `python -m pip install -r requirements.txt`, configure Ollama locally or explicitly select Groq in `.env`, then start the API with `uvicorn backend.api:app --host 127.0.0.1 --port 8000`. The API stores uploads in `uploads/` and edited files in `generated-documents/`; these are persistent project directories, not temporary storage, and are ignored by Git. Upload a DOCX, plan an edit, present the returned proposal for approval, then download a completed output by its returned download ID. Pending proposals and document/download registries are process-local and are lost when the server restarts, so those old files become inaccessible through the API but are not automatically deleted. Run a single API process so approval and download state remains available. Remove orphaned files manually only after stopping the server. A future cleanup policy should be limited to files owned by an expired process and run after its registries are no longer active; the API currently provides no public cleanup endpoint and performs no automatic deletion.
 
-On Windows environments where Python's Proactor self-pipe socket setup is blocked, run API tests under WSL instead. From PowerShell, the following creates a Linux virtual environment on first use, installs the declared dependencies, and runs both API and full suites:
+On Windows environments where Python's Proactor self-pipe socket setup is blocked, run API tests under WSL instead. From the cloned repository directory, the following creates a Linux virtual environment on first use, installs the declared dependencies, and runs both API and full suites:
 
 ```powershell
-wsl bash -lc 'cd /mnt/c/Users/rayen/Desktop/wordpilot-ai && python3 -m venv .venv-linux && . .venv-linux/bin/activate && python -m pip install -r requirements.txt && python -m pytest tests/test_api.py -v && python -m pytest -q'
+wsl bash -lc 'python3 -m venv .venv-linux && . .venv-linux/bin/activate && python -m pip install -r requirements.txt && python -m pytest tests/test_api.py -v && python -m pytest -q'
 ```
 
 ## Frontend workspace
@@ -34,7 +58,60 @@ The frontend reads `NEXT_PUBLIC_WORDPILOT_API_URL` from `frontend/.env.local` (d
 
 ## DevFlow development orchestrator
 
-`dev_workflow/` is an optional, separate Python package for orchestrating software-development tasks with Codex CLI. It is not part of WordPilot's DOCX backend and does not use the Groq/Ollama document-editing providers. The current package exposes its LangGraph workflow as a Python API; it does not provide a standalone CLI or UI. Codex CLI must be installed separately for live analysis or implementation. Implementation remains behind explicit human approval, and runs in a host-created Git worktree with host-side diff validation.
+`dev_workflow/` is an optional, separate Python package for orchestrating software-development tasks with Codex CLI. It is not part of WordPilot's DOCX backend and does not use the Groq/Ollama document-editing providers. The package exposes its LangGraph workflow as a Python API; it does not provide a standalone task CLI or UI. WordPilot's DOCX application does not require Codex. DevFlow requires the evaluator to install and authenticate Codex CLI independently; this repository does not install it, provide credentials, or inherit another developer's login.
+
+### Architecture overview
+
+```text
+WordPilot: DOCX upload -> host inspection -> typed LLM proposal -> human approval
+          -> deterministic DOCX edits -> integrity results + generated DOCX
+
+DevFlow:   read-only Codex analysis -> structured proposal -> human approve/revise
+          -> isolated Git worktree -> implementation -> diff validation
+          -> host-defined verification -> deterministic final report
+```
+
+In WordPilot, the LLM proposes typed operations; Python validates them and the deterministic editor applies approved operations. The LLM does not edit DOCX files directly. DevFlow is a separate development workflow and Codex CLI is not a runtime document-editing dependency.
+
+DevFlow's implemented stages are read-only analysis, strict structured proposal, human approval or bounded revision, isolated worktree implementation, host-side diff validation, host-defined verification, and a deterministic report built from recorded evidence. Approval is bound to the reviewed proposal fingerprint and revision. The report distinguishes passed, failed, rejected, and awaiting-approval runs, and records missing or unrun checks without claiming they passed. There is no approval UI, independent review stage, or correction loop.
+
+### Clean-clone setup and host prerequisites
+
+The repository declares Python 3.11+ dependencies in `requirements.txt` and requires Git for DevFlow worktrees. Codex CLI is an external prerequisite for DevFlow only. Install it using the current [official Codex CLI installation instructions](https://developers.openai.com/codex/cli/); with Node.js/npm installed, the documented npm package command is:
+
+```powershell
+npm install -g @openai/codex
+codex --version
+```
+
+Start `codex` and complete sign-in using an account or credential permitted in your environment, then verify with `codex login status`. Authentication is local to the evaluator's Codex setup and is never provisioned by this repository. Current Codex installation and sign-in methods can change; consult the official instructions if those commands differ.
+
+From the repository root, set up Python and install dependencies:
+
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+On POSIX shells use `python3 -m venv .venv`, `source .venv/bin/activate`, then the same two `python -m pip` commands. Run the read-only startup diagnostic (it checks Python dependencies, Git, Codex version/authentication, and whether CLI help advertises analysis/write options; it never runs an agent task):
+
+```powershell
+python scripts/devflow_diagnostics.py
+```
+
+By default DevFlow discovers `codex` on `PATH`. To select a specific installation, set `CODEX_CLI_PATH` to its executable file in the current shell:
+
+```powershell
+$env:CODEX_CLI_PATH = 'C:\path\to\codex.exe'
+```
+
+The diagnostic's `workspace_write_capability` result only checks CLI help. It does not prove that Codex can successfully write in the current host environment. For the optional manual marker-write preflight and its evidence details, see the single canonical section below. The workflow does not run preflight automatically before implementation.
+
+Run all repository tests with `python -m pytest -q`. Start the document-editing backend with `python -m uvicorn backend.api:app --host 127.0.0.1 --port 8000`; this does not require Codex CLI. DevFlow itself is currently invoked through the Python API shown below and has no standalone `run` command.
+
+The repository has no published OS support matrix, and a clean clone has not been verified across Windows, Linux, and macOS. Treat the commands above as setup guidance, not a cross-platform support claim. Windows sandbox behavior depends on the host Codex sandbox backend and managed execution policy; inspect and configure these on the evaluator's machine. DevFlow does not change those settings. Linux and macOS operation, including sandbox capabilities, must be verified on those hosts before claiming support.
 
 DevFlow approvals use a persistent SQLite LangGraph checkpointer. The host must select and reuse the same database file and workflow run ID to resume an approval after restarting the process. The default local developer location is `.devflow/checkpoints.sqlite3`; this directory is ignored by Git. Evidence JSON files are for inspection and are never used as approval tokens. Open and close the saver around each process lifecycle:
 
@@ -44,29 +121,60 @@ from dev_workflow import (
     build_dev_workflow,
     new_workflow_state,
     open_sqlite_checkpointer,
+    new_workflow_decision,
     resume_pending_approval,
     workflow_config,
 )
+from dev_workflow.schemas import FinalReport, TaskProposal
 
 database = Path(".devflow/checkpoints.sqlite3")
 with open_sqlite_checkpointer(database) as checkpointer:
     graph = build_dev_workflow(checkpointer=checkpointer)
     state = new_workflow_state(task, repository_path)
-    graph.invoke(state, workflow_config(state["run_id"]))
-    # Display the saved proposal and collect a human decision.
+    pending = graph.invoke(state, workflow_config(state["run_id"]))
+    proposal = TaskProposal.model_validate(pending["proposal"])
+    # Display this proposal and fingerprint to a human reviewer before deciding.
+    human_decision = new_workflow_decision(
+        proposal,
+        action="approve",  # Or "reject" / "request_changes" with feedback.
+        proposal_revision=pending["revision_count"],
+    )
 
-# In a later process, reopen the same database and use the original run ID.
+# Reopen the same database and use the run ID from the saved pending state.
 with open_sqlite_checkpointer(database) as checkpointer:
     graph = build_dev_workflow(checkpointer=checkpointer)
-    result = resume_pending_approval(graph, run_id, human_decision)
+    result = resume_pending_approval(graph, pending["run_id"], human_decision)
+    report = FinalReport.model_validate(result["final_report"])
+    print(report.model_dump_json(indent=2))
 ```
 
-`resume_pending_approval` verifies that the saved run is paused at its approval interrupt, that the interrupt and current proposal agree, and that the decision fingerprint and revision match before resuming LangGraph.
+`new_workflow_decision` binds the human action to the proposal fingerprint and revision. `resume_pending_approval` verifies that the saved run is paused at its approval interrupt, that the interrupt and current proposal agree, and that the decision fingerprint and revision match before resuming LangGraph. In this example, `task` and `repository_path` are values supplied by the caller. A `request_changes` decision requires `feedback`; the workflow sends it back for a bounded proposal revision.
+
+### Optional manual write-capability preflight
+
+The write-capability preflight runs only when invoked manually, in a separate disposable Git worktree. It uses the same Codex CLI implementation adapter and `workspace-write` sandbox, requests a unique marker file, verifies its exact contents and complete diff, saves a JSON evidence record under the system temporary directory, and removes only that disposable worktree after saving evidence. A failed preflight reports failure; it does not change Windows sandbox settings or retry with weaker permissions. Run it from the repository root with:
+
+```powershell
+python -c "from dev_workflow.preflight import run_write_capability_preflight; import json; print(json.dumps(run_write_capability_preflight('.').model_dump(mode='json'), indent=2))"
+```
+
+`CODEX_CLI_PATH` must name an existing Codex executable file. DevFlow uses it first, then falls back to `codex` on `PATH`; it does not search extension directories. The same resolver and implementation adapter are used by preflight and approved implementation.
+
+This command invokes Codex CLI in a disposable worktree and writes/removes its unique marker there. Inspect the reported evidence path. If it fails on Windows, investigate the host-controlled Codex `windows.sandbox` backend selection and any managed execution policy; DevFlow does not alter either setting. This preflight is not a task-graph stage and is not invoked automatically.
+
+After implementation passes diff validation, DevFlow runs its fixed, host-defined verification checks in the worktree:
+
+```text
+python -m pytest -q
+npm run typecheck
+```
+
+The frontend command runs from `frontend/`. Its dependencies must be available in the detached worktree; `node_modules` is not part of the Git worktree, and DevFlow does not install packages as part of its checks. The host must provision dependencies for the worktree before typechecking; the current graph has no package-install hook between implementation and verification. Verification evidence is tied to the worktree diff. If a process is interrupted before a verification result is checkpointed, verification may be retried on resume. Completed, checkpointed stages are resumed from their saved state and are not unnecessarily repeated. The deterministic final report records implementation, diff-validation, and verification outcomes, plus failures, remaining risks, and evidence references.
 
 Run the DevFlow tests from the repository root:
 
 ```powershell
-py -3.12 -m pytest tests/test_dev_workflow_schemas.py tests/test_dev_workflow_state.py tests/test_dev_workflow_codex_cli.py tests/test_dev_workflow_graph.py tests/test_dev_workflow_worktree.py tests/test_dev_workflow_checkpointing.py -q
+python -m pytest tests/test_dev_workflow_schemas.py tests/test_dev_workflow_state.py tests/test_dev_workflow_codex_cli.py tests/test_dev_workflow_preflight.py tests/test_dev_workflow_verification.py tests/test_dev_workflow_reporting.py tests/test_dev_workflow_graph.py tests/test_dev_workflow_worktree.py tests/test_dev_workflow_checkpointing.py tests/test_devflow_diagnostics.py -q
 ```
 
 Import the workflow from the root package with `from dev_workflow import build_dev_workflow`. The full backend and repository test command remains `python -m pytest -q`.

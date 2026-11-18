@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import difflib
+import hashlib
+import stat
 import subprocess
 from pathlib import Path
 
@@ -22,6 +24,51 @@ def _git(repository: Path, *args: str, timeout: int = 30) -> bytes:
     return completed.stdout
 
 
+def _diff_snapshot(worktree: Path) -> str:
+    """Hash the validator's tracked, untracked, and ignored change inputs once."""
+    tracked_patch = _git(
+        worktree, "diff", "--no-ext-diff", "--no-color", "--binary", "HEAD",
+    )
+    untracked = _git(worktree, "ls-files", "--others", "--exclude-standard", "-z")
+    ignored = _git(
+        worktree, "ls-files", "--others", "--ignored", "--exclude-standard", "-z",
+    )
+    paths = sorted({raw for raw in untracked.split(b"\0") + ignored.split(b"\0") if raw})
+    digest = hashlib.sha256()
+    digest.update(tracked_patch)
+    for raw in paths:
+        relative = raw.decode("utf-8", errors="strict")
+        candidate = worktree / relative
+        if candidate.is_symlink() or not candidate.is_file():
+            raise ValueError("Worktree contains an unsafe untracked path.")
+        resolved = candidate.resolve(strict=True)
+        if worktree not in resolved.parents:
+            raise ValueError("Worktree contains an unsafe untracked path.")
+        before = candidate.stat()
+        digest.update(len(raw).to_bytes(4, "big"))
+        digest.update(raw)
+        digest.update(b"x" if before.st_mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH) else b"-")
+        with candidate.open("rb") as stream:
+            while chunk := stream.read(64 * 1024):
+                digest.update(chunk)
+        after = candidate.stat()
+        if (before.st_size, before.st_mtime_ns, before.st_mode) != (
+            after.st_size, after.st_mtime_ns, after.st_mode,
+        ):
+            raise RuntimeError("Worktree changed while diff identity was captured.")
+    return digest.hexdigest()
+
+
+def diff_identity(worktree_path: str | Path) -> str:
+    """Return a stable identity or fail if the worktree changes during capture."""
+    worktree = Path(worktree_path).resolve(strict=True)
+    first = _diff_snapshot(worktree)
+    second = _diff_snapshot(worktree)
+    if first != second:
+        raise RuntimeError("Worktree changed while diff identity was captured.")
+    return first
+
+
 def create_worktree(repository_path: str | Path, run_id: str) -> str:
     """Create a detached worktree under a host-selected ignored directory."""
     repository = Path(repository_path).resolve()
@@ -38,6 +85,36 @@ def create_worktree(repository_path: str | Path, run_id: str) -> str:
     if target.exists():
         raise ValueError("Worktree target already exists.")
     _git(root, "worktree", "add", "--detach", str(target), "HEAD", timeout=120)
+    return str(target)
+
+
+def validate_registered_worktree(repository_path: str | Path, worktree_path: str | Path) -> str:
+    """Return a canonical worktree path only when registered under this repository."""
+    repository = Path(repository_path).resolve(strict=True)
+    root = Path(_git(repository, "rev-parse", "--show-toplevel").decode("utf-8", errors="strict").strip()).resolve()
+    supplied = Path(worktree_path)
+    parent = root / ".devflow-worktrees"
+    if supplied.is_symlink() or parent.is_symlink():
+        raise ValueError("Implementation requires a registered DevFlow worktree.")
+    target = supplied.resolve(strict=True)
+    if (
+        not target.is_dir()
+        or target == root
+        or target.parent != parent
+        or not parent.is_dir()
+        or parent.resolve(strict=True) != parent
+    ):
+        raise ValueError("Implementation requires a worktree under the repository's DevFlow worktree directory.")
+    target_root = Path(_git(target, "rev-parse", "--show-toplevel").decode("utf-8", errors="strict").strip()).resolve()
+    if target_root != target:
+        raise ValueError("Implementation path is not a Git worktree root.")
+    registered = {
+        Path(line.removeprefix("worktree ")).resolve()
+        for line in _git(root, "worktree", "list", "--porcelain").decode("utf-8", errors="strict").splitlines()
+        if line.startswith("worktree ")
+    }
+    if target not in registered:
+        raise ValueError("Implementation path is not a registered worktree of this repository.")
     return str(target)
 
 
