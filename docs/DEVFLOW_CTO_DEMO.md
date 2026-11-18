@@ -47,10 +47,11 @@ If preflight fails, do not proceed to implementation. Resolve the issue reported
 
 ### Step 2 — Option 2: Start a new task
 
-Only after option 1 passes, choose **2. Start a new task** and enter the task description. For a reusable CTO demonstration, use this example:
+Only after option 1 passes, choose **2. Start a new task** and enter the task description. Task entry is multiline: after typing the full description, type `END` by itself on a new line and press Enter. For a reusable CTO demonstration, use this example:
 
 ```text
 Create average.py with an average(numbers) function that returns the arithmetic mean for a non-empty sequence and raises ValueError for an empty sequence. Add test_average.py pytest tests for positive values, negative values, and the empty sequence.
+END
 ```
 
 This average task is proposed demo content and has not been established as executed or passed. The prior verified task was `calculate_square(number)` in an isolated worktree.

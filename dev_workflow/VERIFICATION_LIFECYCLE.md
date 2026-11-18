@@ -31,7 +31,7 @@ The CLI menu is:
 | Option | Action |
 |---|---|
 | 1 | Check environment, including the mandatory live Codex preflight. |
-| 2 | Start a new task; blocked until option 1 passes in this CLI session. |
+| 2 | Start a new task; blocked until option 1 passes in this CLI session. Enter the task description, then type `END` alone on a new line to submit it. |
 | 3 | Review a pending approval. |
 | 4 | Resume an existing workflow. |
 | 5 | Inspect workflow status and report. |

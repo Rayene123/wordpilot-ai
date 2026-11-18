@@ -117,8 +117,10 @@ def run_diagnostics(*, root: Path = REPOSITORY_ROOT, environ: dict[str, str] | N
         codex_result["status"] = "available"
 
     checks = {
-        "python": {"status": "passed" if sys.version_info >= (3, 11) else "failed",
-                   "version": sys.version.split()[0], "required": ">=3.11"},
+        "python": {
+            "status": "passed" if (3, 12) <= sys.version_info < (3, 13) else "failed",
+            "version": sys.version.split()[0], "required": ">=3.12,<3.13",
+        },
         "python_dependencies": {
             "status": "passed" if all(value == "available" for value in dependencies.values()) else "failed",
             "packages": dependencies,

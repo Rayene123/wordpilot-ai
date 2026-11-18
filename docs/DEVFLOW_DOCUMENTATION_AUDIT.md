@@ -69,7 +69,7 @@ if exist "%CODEX_CLI_PATH%" (echo Codex CLI found) else (echo Codex CLI NOT foun
 py -3.12 -m dev_workflow
 ```
 
-At the CLI, select **1. Check environment** and proceed only if the preflight passes. Then select **2. Start a new task**, enter the task description, review the proposal, and explicitly approve before implementation. In CMD, `set` applies to the current terminal session. `CODEX_CLI_PATH` can be omitted if `codex` is available on `PATH`.
+At the CLI, select **1. Check environment** and proceed only if the preflight passes. Then select **2. Start a new task**, enter the task description, type `END` alone on a new line to submit it, review the proposal, and explicitly approve before implementation. In CMD, `set` applies to the current terminal session. `CODEX_CLI_PATH` can be omitted if `codex` is available on `PATH`.
 
 ## Remaining documentation and validation gaps
 
