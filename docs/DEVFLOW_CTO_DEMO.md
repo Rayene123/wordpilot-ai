@@ -1,95 +1,98 @@
 # CTO demo: DevFlow Python source generation
 
-This demo uses the existing interactive DevFlow CLI to ask Codex to create `average.py` and `test_average.py` in a detached Git worktree. The host checkpoints a validated proposal and waits for a human decision. Only approval continues into implementation. The existing diff validator, change-selected host verification checks, SQLite checkpoint, and report are used.
+This guide describes the configured Windows workflow and a proposed reusable demonstration task. The previously validated execution used `calculate_square(number)` in an isolated worktree. The `average.py` / `test_average.py` task below is a future demonstration example; there is no prior execution evidence for it.
 
 ![DevFlow development lifecycle](images/devflow-development-lifecycle.svg)
 
 ## Windows prerequisites
 
-- Windows 10/11, Git for Windows, Python 3.11+ (`requirements.txt`), and Node.js/npm compatible with the project's Next.js 15 dependency (Node.js 18.18 or newer).
-- A clean, trusted clone. Git must be able to create `.devflow-worktrees/` under the repository.
-- Codex CLI installed independently and authenticated with an allowed account or credential. This repository does not provide or inherit credentials.
-- A Codex Windows sandbox backend allowed by local or managed policy. DevFlow requires `DEVFLOW_WINDOWS_SANDBOX` for implementation; it does not change policy or retry with weaker settings.
+- Windows 10/11, Git for Windows, Python 3.12, and the project dependencies from `requirements.txt`.
+- Node.js/npm compatible with the project's Next.js 15 dependency (Node.js 18.18 or newer) when demonstrating frontend changes.
+- A trusted clone where Git can create `.devflow-worktrees/` under the repository.
+- Codex CLI installed independently and authenticated with an allowed account or credential. DevFlow neither installs Codex nor provides or installs Codex credentials.
+- A Codex Windows sandbox backend allowed by local or managed policy. `DEVFLOW_WINDOWS_SANDBOX` was configured as `elevated` for the demonstrated setup. DevFlow does not change policy or retry with weaker settings.
 
-## Install dependencies
+## Windows setup (Command Prompt)
 
-Run these PowerShell commands from the repository root. Python dependencies come from `requirements.txt`; frontend dependencies come from `frontend/package.json` and its lockfile.
+Open **Command Prompt (CMD)** and run the demonstrated commands:
 
-```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-npm ci --prefix frontend
-npm install -g @openai/codex
-codex --version
-codex login status
+```bat
+cd /d C:\Users\rayen\Desktop\wordpilot-ai
+
+set DEVFLOW_WINDOWS_SANDBOX=elevated
+set CODEX_CLI_PATH=%USERPROFILE%\.vscode\extensions\openai.chatgpt-26.1111.21308-win32-x64\bin\windows-x86_64\codex.exe
+
+if exist "%CODEX_CLI_PATH%" (echo Codex CLI found) else (echo Codex CLI NOT found)
+
+py -3.12 -m dev_workflow
 ```
 
-If `codex login status` shows no valid session, run `codex` and complete sign-in. `CODEX_CLI_PATH` is optional when `codex` is on `PATH`; set it to the actual executable if needed. On native Windows, select a sandbox backend supported by this device and its policy, for example:
+`DEVFLOW_WINDOWS_SANDBOX` selects the Windows sandbox backend; `elevated` is the value configured for this validated workflow. `CODEX_CLI_PATH` points to the Codex executable installed through the VS Code extension. The extension-version directory can differ between installations, so adjust that path if needed. `CODEX_CLI_PATH` is optional when Codex is available through `PATH`. In CMD, `set` variables apply only to the current terminal session. Python 3.12.10 was the version used during validation.
 
-```powershell
-$env:DEVFLOW_WINDOWS_SANDBOX = 'mxc'
+The commands above launch DevFlow; they do not install Python dependencies or Codex. Install project dependencies and the Codex CLI separately as needed, and authenticate Codex independently before using the workflow.
+
+## Required menu sequence
+
+### Step 1 — Option 1: Check environment
+
+Choose **1. Check environment** before creating a task. The previously successful preflight checked Python and Git availability, Codex CLI availability, dependencies and project configuration, Codex authentication, read-only execution, workspace-write execution in a disposable worktree, host-side marker and diff validation, and cleanup of the disposable preflight worktree. That preflight reported:
+
+```text
+Overall: passed
 ```
 
-Use `elevated` only when the administrator-provisioned setup is available. `unelevated` has weaker network isolation and should only be used when permitted and appropriate. The read-only startup diagnostic is:
+The live Codex checks verify authentication, a bounded read-only repository observation, and workspace-write capability. For workspace-write, DevFlow creates a disposable worktree, asks Codex to create a unique marker, validates the marker and complete host-collected diff, saves evidence, then removes the worktree. Cleanup is part of passing the preflight.
 
-```powershell
-.\.venv\Scripts\python.exe scripts/devflow_diagnostics.py
-```
+If preflight fails, do not proceed to implementation. Resolve the issue reported by option 1, then run option 1 again and confirm it passes. The CLI blocks option 2 unless the current session has a successful preflight.
 
-## Run the demo
+### Step 2 — Option 2: Start a new task
 
-Use the venv interpreter directly so PowerShell script activation policy is irrelevant. Launch the existing CLI:
-
-```powershell
-.\.venv\Scripts\python.exe -m dev_workflow
-```
-
-Choose menu item `2` and enter this task:
+Only after option 1 passes, choose **2. Start a new task** and enter the task description. For a reusable CTO demonstration, use this example:
 
 ```text
 Create average.py with an average(numbers) function that returns the arithmetic mean for a non-empty sequence and raises ValueError for an empty sequence. Add test_average.py pytest tests for positive values, negative values, and the empty sequence.
 ```
 
-Review the proposal's expected files, scope, and acceptance criteria. Choose `1` to approve, `2` to reject, or `3` to request a bounded revision. No source files or implementation worktree are created before approval. Approval is bound to the exact proposal fingerprint and revision. A rejection produces a report without an implementation worktree.
+This average task is proposed demo content and has not been established as executed or passed. The prior verified task was `calculate_square(number)` in an isolated worktree.
 
-## Checkpoint and resume
+Codex first analyzes the task and returns a structured proposal. Review its summary, requirements, expected files, included and excluded scope, risks, and acceptance criteria. At the human decision prompt, choose **1** to approve, **2** to reject, or **3** to request bounded proposal changes. Approval is bound to the exact proposal fingerprint and revision. Codex does not start implementation before explicit human approval. Rejection records a report without creating an implementation worktree; requesting changes returns the revised proposal for review. Implementation begins only after approval, in a detached worktree.
 
-The CLI stores checkpoints in `.devflow/checkpoints.sqlite3` (ignored by Git). If you close the terminal while approval is pending, relaunch the same command and choose menu item `3` to review a pending approval or `4` to select and resume a saved run. Do not remove or replace the SQLite file. The CLI reopens the database and uses the public `resume_pending_approval` API. The final report is printed and retained in checkpoint state.
+## Detached worktree and diff review
 
-## Inspect the worktree and diff
+After approval, DevFlow creates a detached Git worktree under `.devflow-worktrees/<RUN_ID>` and runs implementation there, keeping the main checkout separate. The host collects the complete diff, including untracked files, and validates it against the approved proposal's file scope and expected actions. Host-collected diff validation is authoritative; model instructions alone do not enforce scope.
 
-After approval, locate the worktree path in the final report. It must be under `.devflow-worktrees/<RUN_ID>`. Inspect the registered worktree and changed files:
+The final report identifies the worktree path, changed files, diff validation status, implementation result, verification checks and their statuses, failures, and overall status. Inspect the registered worktree and files using CMD, substituting the reported run ID:
 
-```powershell
+```bat
 git worktree list
 git -C .devflow-worktrees/<RUN_ID> status --short
 git -C .devflow-worktrees/<RUN_ID> diff --no-ext-diff --no-color HEAD
-Get-Content .devflow-worktrees/<RUN_ID>/average.py
-Get-Content .devflow-worktrees/<RUN_ID>/test_average.py
+type .devflow-worktrees/<RUN_ID>/average.py
+type .devflow-worktrees/<RUN_ID>/test_average.py
 ```
 
-Untracked files are included in DevFlow's host-collected diff report even though plain `git diff` omits them. The report lists changed files and diff validation status. The demo leaves the registered worktree available for inspection; it does not commit, push, or merge it into the main checkout.
+Plain `git diff` does not show untracked files, but DevFlow's host diff report includes them. The workflow leaves the implementation worktree available for inspection. It does not commit, push, or merge changes into the main checkout.
 
-## Verification and expected output
+## Checkpoint and resume
 
-Because this task changes Python files only, the workflow runs the host Python check in the worktree:
+The CLI stores workflow checkpoints in `.devflow/checkpoints.sqlite3` (ignored by Git). The SQLite checkpointer preserves workflow state across restarts, including a pending human approval. If you close the terminal while approval is pending, relaunch DevFlow, run option 1 successfully, then choose **3. Review pending approval**. Choose **4. Resume an existing workflow** to select and resume a saved run. Do not remove or replace the SQLite file. The final report is printed and retained in checkpoint state.
+
+## Change-selected verification
+
+Verification uses fixed host-defined checks selected from the validated changed files; task or model output cannot choose commands. Python changes select:
 
 ```text
 python -m pytest -q -p no:cacheprovider
 ```
 
-The Python verification process also sets `PYTHONDONTWRITEBYTECODE=1`; pytest cache and bytecode artifacts therefore do not change the worktree identity. Frontend typechecking is required only when the host-validated diff contains files under `frontend/`. Mixed Python and frontend changes run both checks; documentation-only changes run no unrelated suite.
+The Python verification process sets `PYTHONDONTWRITEBYTECODE=1` so pytest cache and bytecode artifacts do not change the worktree identity. Files under `frontend/` select `npm run typecheck` from the `frontend` directory. A mixed Python and frontend diff selects both checks. Documentation-only changes run no unrelated suite. Other unclassified source/configuration changes retain the full configured host check set.
 
-The final report shows the proposal decision, implementation result, changed files, diff status, each check's command/status/exit code, failures, and overall status. A fully passing run reports `passed`; failed or unavailable checks remain visibly failed. The Python check runs the configured repository test suite, including any generated `test_average.py` tests.
+Known limitation for frontend tasks: `frontend/node_modules` is ignored and is not copied into detached Git worktrees. There is no dependency-install stage between implementation and verification, so installing frontend dependencies in the main checkout does not provision the detached worktree. On a fresh worktree, frontend typechecking may fail because dependencies are absent; the report must retain that failure and cannot describe the overall run as successful. The workflow does not weaken verification or add a package-install mechanism to hide this limitation.
 
-Known limitation for frontend tasks: `frontend/node_modules` is ignored and is not copied into detached Git worktrees. The current graph has no dependency-install stage between implementation and verification. Therefore `npm ci --prefix frontend` in the main checkout does not provision the detached worktree. On a fresh checkout, frontend typechecking may fail because dependencies are absent there; the report must show that failure and overall status must not be described as successful. The demo does not weaken verification or add a package-install mechanism to hide this limitation.
+## Windows troubleshooting
 
-## Windows execution-policy and troubleshooting
-
-- If `Activate.ps1` is blocked by execution policy, do not change machine policy for this demo. Use the direct `.\.venv\Scripts\python.exe` commands above.
 - If Git reports `dubious ownership`, ensure the clone belongs to the current Windows user. Do not broadly mark directories safe.
-- If Codex is missing, install it or set `CODEX_CLI_PATH`. If authentication fails, complete `codex` sign-in and rerun `codex login status`.
+- If Codex is missing, correct `CODEX_CLI_PATH` or make `codex` available through `PATH`. If authentication fails, complete Codex sign-in independently, then rerun option 1.
 - If implementation is rejected by Windows sandbox policy, inspect the installed Codex Windows sandbox backend and managed policy. Confirm `DEVFLOW_WINDOWS_SANDBOX` names a permitted, supported backend. DevFlow does not modify settings or retry with a bypass.
-- If a check fails, inspect its bounded stdout/stderr in the workflow report and reproduce it from the registered worktree. Never report a failed or `not_run` check as passing.
-- To reject a proposal, choose menu item `2`; do not edit SQLite approval state manually.
+- If a check fails, inspect its bounded stdout/stderr in the workflow report and reproduce it from the registered worktree. Never describe a failed or `not_run` check as passing.
+- To reject a proposal, choose **2. Reject** at the proposal decision prompt; do not edit SQLite approval state manually.

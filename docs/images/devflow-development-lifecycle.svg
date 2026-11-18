@@ -45,7 +45,7 @@
 
   <rect class="box" x="292" y="245" width="216" height="110" rx="10"/>
   <text class="ttl" x="400" y="283">Environment Preflight</text>
-  <text class="txt" x="400" y="310">Python 3.12+, Git, Codex CLI,</text>
+  <text class="txt" x="400" y="310">Python 3.12, Git, Codex CLI,</text>
   <text class="txt" x="400" y="328">auth, read-only + write probes</text>
 
   <polygon class="dia" points="620,238 688,300 620,362 552,300"/>

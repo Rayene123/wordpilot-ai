@@ -2,7 +2,7 @@
 
 ## 1. Purpose
 
-DevFlow is an optional software-development workflow orchestrator. It coordinates task analysis, human approval, isolated implementation, diff validation, verification, and reporting.
+DevFlow is optional development-time tooling that orchestrates Codex CLI for software development tasks. It coordinates task analysis, human approval, isolated implementation, diff validation, verification, and reporting. It is not part of WordPilot's delivered runtime and does not process WordPilot end-user instructions.
 
 It is separate from the WordPilot application runtime and does not use the application's AI provider.
 
@@ -20,7 +20,27 @@ The implemented workflow follows these stages:
 
 The workflow is checkpointed and can pause for human approval.
 
-## 3. Task Analysis
+## 3. Host Setup and CLI
+
+The repository declares Python `>=3.12,<3.13` in `pyproject.toml`; install the Python dependencies from the repository root with `python -m pip install -r requirements.txt`. DevFlow also requires Git on `PATH` and a Codex CLI installed and authenticated independently. `CODEX_CLI_PATH` may point to the executable; otherwise DevFlow resolves `codex` through `PATH`. DevFlow does not install Codex or provide credentials.
+
+On Windows, launch from the repository root with `py -3.12 -m dev_workflow` after dependencies are installed. Before implementation, set `DEVFLOW_WINDOWS_SANDBOX` to a backend accepted by the implementation: `mxc`, `elevated`, or `unelevated`. Codex and managed policy determine whether that backend is available. The previous live Windows execution used CMD, Python 3.12.10, and `elevated`; it does not verify the other values or every Windows configuration. The project has not established Linux or macOS live execution through that evidence.
+
+The CLI menu is:
+
+| Option | Action |
+|---|---|
+| 1 | Check environment, including the mandatory live Codex preflight. |
+| 2 | Start a new task; blocked until option 1 passes in this CLI session. |
+| 3 | Review a pending approval. |
+| 4 | Resume an existing workflow. |
+| 5 | Inspect workflow status and report. |
+| 6 | Run available verification for a saved validated worktree diff. |
+| 7 | Exit. |
+
+The live preflight checks Codex authentication, read-only execution, and workspace-write execution in a disposable worktree, including host marker/diff validation and cleanup. The CLI also reports Python, Git, required dependency, and project-config availability. Resolve failures and pass option 1 before starting or continuing implementation. The exact previously validated Windows command sequence is in the [CTO demo guide](../docs/DEVFLOW_CTO_DEMO.md).
+
+## 4. Task Analysis
 
 The analysis stage sends the task description, repository path, and any revision feedback to the configured Codex CLI adapter.
 
@@ -34,7 +54,7 @@ A successful process exit alone is not sufficient evidence of successful analysi
 
 The analysis stage does not authorize repository modifications.
 
-## 4. Proposal Validation
+## 5. Proposal Validation
 
 The proposal is validated using strict schemas. Unexpected fields and invalid values are rejected.
 
@@ -48,7 +68,7 @@ The workflow calculates a proposal fingerprint using canonical proposal data and
 
 The fingerprint binds subsequent human decisions to the exact proposal revision.
 
-## 5. Human Approval and Revisions
+## 6. Human Approval and Revisions
 
 Implementation requires an explicit human approval decision.
 
@@ -65,7 +85,7 @@ A decision must match the current proposal fingerprint and revision. Stale or mi
 
 The workflow does not implement an approval UI; approval is supplied through its host-facing API.
 
-## 6. Checkpointing and Resume
+## 7. Checkpointing and Resume
 
 DevFlow requires an explicit checkpointer.
 
@@ -86,7 +106,7 @@ To resume a pending approval, DevFlow verifies:
 
 Only a decision matching the saved proposal can resume the workflow.
 
-## 7. Isolated Implementation
+## 8. Isolated Implementation
 
 After approval, DevFlow creates a detached Git worktree under:
 
@@ -103,7 +123,7 @@ The implementation adapter receives the approved proposal, its fingerprint, and 
 
 The user's original checkout is not the implementation workspace.
 
-## 8. Diff Collection and Scope Validation
+## 9. Diff Collection and Scope Validation
 
 After implementation, DevFlow collects changes from the isolated worktree.
 
@@ -127,7 +147,7 @@ The result is represented as a `DiffReport` with a status such as `valid`, `inva
 
 A valid implementation must produce a non-empty diff matching the approved proposal.
 
-## 9. Verification
+## 10. Verification
 
 Verification is performed by host-configured checks, not commands selected by the model.
 
@@ -163,7 +183,7 @@ When a check fails or times out, subsequent checks are marked `not_run`.
 
 DevFlow captures the worktree diff identity before and after verification. Ignored files remain part of that identity; routine Python test artifacts are prevented by the Python check settings above. If the source diff changes or cannot be revalidated during verification, completed results are retained but marked failed, and the reason is recorded as a bounded, redacted workflow diagnostic. Genuine source modifications remain invalidating failures.
 
-## 10. Final Reporting
+## 11. Final Reporting
 
 The final report is built from checkpointed workflow evidence, including:
 - The proposal and its revision.
@@ -184,7 +204,7 @@ Missing required verification results prevent a successful report.
 
 The final report does not treat an implementation process exit code alone as proof of a successful lifecycle.
 
-## 11. Current Limitations
+## 12. Current Limitations
 
 The following capabilities are not implemented as separate workflow stages:
 
@@ -197,7 +217,7 @@ The workflow currently performs host-configured verification and evidence-based 
 
 On Windows environments where managed execution policy blocks Codex from launching its shell process, repository inspection may fail. The fail-closed analysis behavior prevents such a refusal from being treated as successful analysis. This does not itself resolve the underlying process-launch restriction.
 
-## 12. Security Principles
+## 13. Security Principles
 
 DevFlow follows these boundaries:
 
