@@ -6,6 +6,8 @@ DevFlow is optional development-time tooling that orchestrates Codex CLI for sof
 
 It is separate from the WordPilot application runtime and does not use the application's AI provider.
 
+This lifecycle guide was generated using this repository's DevFlow workflow during a task and used also to add a simple Python math function to test coding capabilities.
+
 ## 2. Lifecycle Overview
 
 The implemented workflow follows these stages:
@@ -28,15 +30,15 @@ On Windows, launch from the repository root with `py -3.12 -m dev_workflow` afte
 
 The CLI menu is:
 
-| Option | Action |
-|---|---|
-| 1 | Check environment, including the mandatory live Codex preflight. |
-| 2 | Start a new task; blocked until option 1 passes in this CLI session. Enter the task description, then type `END` alone on a new line to submit it. |
-| 3 | Review a pending approval. |
-| 4 | Resume an existing workflow. |
-| 5 | Inspect workflow status and report. |
-| 6 | Run available verification for a saved validated worktree diff. |
-| 7 | Exit. |
+| Option | Action                                                                                                                                             |
+| ------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1      | Check environment, including the mandatory live Codex preflight.                                                                                   |
+| 2      | Start a new task; blocked until option 1 passes in this CLI session. Enter the task description, then type `END` alone on a new line to submit it. |
+| 3      | Review a pending approval.                                                                                                                         |
+| 4      | Resume an existing workflow.                                                                                                                       |
+| 5      | Inspect workflow status and report.                                                                                                                |
+| 6      | Run available verification for a saved validated worktree diff.                                                                                    |
+| 7      | Exit.                                                                                                                                              |
 
 The live preflight checks Codex authentication, read-only execution, and workspace-write execution in a disposable worktree, including host marker/diff validation and cleanup. The CLI also reports Python, Git, required dependency, and project-config availability. Resolve failures and pass option 1 before starting or continuing implementation. The exact previously validated Windows command sequence is in the [CTO demo guide](../docs/DEVFLOW_CTO_DEMO.md).
 
@@ -61,6 +63,7 @@ The proposal is validated using strict schemas. Unexpected fields and invalid va
 Proposal paths are checked against repository-relative path rules. The workflow rejects unsafe paths, traversal, and symlink-based escapes.
 
 Expected file actions are checked against the current repository state:
+
 - `create`: the target must not already exist.
 - `modify` or `delete`: the target must already exist.
 
@@ -75,6 +78,7 @@ Implementation requires an explicit human approval decision.
 The approval interrupt contains the run ID, proposal, proposal fingerprint, and revision information.
 
 Supported decisions are:
+
 - `approve`: authorize implementation of the exact validated proposal.
 - `reject`: reject the proposal.
 - `request_changes`: return the task to analysis with revision feedback.
@@ -90,6 +94,7 @@ The workflow does not implement an approval UI; approval is supplied through its
 DevFlow requires an explicit checkpointer.
 
 The SQLite checkpoint helper:
+
 - Requires a persistent database file path.
 - Creates the parent directory when necessary.
 - Checks database integrity.
@@ -97,6 +102,7 @@ The SQLite checkpoint helper:
 - Raises an error for an unusable or corrupt database instead of silently replacing it with an in-memory saver.
 
 To resume a pending approval, DevFlow verifies:
+
 - The saved run ID.
 - The pending approval stage and interrupt.
 - The saved proposal and revision.
@@ -115,6 +121,7 @@ After approval, DevFlow creates a detached Git worktree under:
 The worktree directory is host-selected. Existing targets and symlink-based directory escapes are rejected.
 
 Before implementation and subsequent operations, the worktree is checked to ensure that it:
+
 - Is inside the expected DevFlow worktree directory.
 - Is a Git worktree root.
 - Is registered with the original repository.
@@ -128,6 +135,7 @@ The user's original checkout is not the implementation workspace.
 After implementation, DevFlow collects changes from the isolated worktree.
 
 Diff collection accounts for:
+
 - Tracked changes.
 - Untracked files.
 - Ignored untracked files.
@@ -135,6 +143,7 @@ Diff collection accounts for:
 Each changed file is checked against the approved file scope and expected action.
 
 The workflow rejects:
+
 - Changes outside the approved scope.
 - Unexpected file actions.
 - Missing expected changes.
@@ -154,6 +163,7 @@ Verification is performed by host-configured checks, not commands selected by th
 The public verification entry point selects from fixed host checks using only the changed paths in the host-validated `DiffReport`. Proposal text and model output cannot select or skip commands.
 
 Each check has:
+
 - A fixed check ID.
 - A display name.
 - A fixed argument list.
@@ -165,6 +175,7 @@ Processes are launched with `shell=False`. Output is bounded and sensitive value
 On Windows, the configured npm typecheck is resolved to a directly launchable Node.js/npm CLI process when the npm launcher is a `.cmd` file.
 
 The host selects checks by changed paths:
+
 - Python files require `python.tests`.
 - Files under `frontend/` require `frontend.typecheck`.
 - Changes in both areas require both checks.
@@ -174,6 +185,7 @@ The host selects checks by changed paths:
 The Python check runs `python -m pytest -q -p no:cacheprovider` with `PYTHONDONTWRITEBYTECODE=1`. This prevents pytest cache and Python bytecode artifacts from appearing as worktree changes during verification.
 
 Verification records statuses including:
+
 - `passed`
 - `failed`
 - `timed_out`
@@ -186,6 +198,7 @@ DevFlow captures the worktree diff identity before and after verification. Ignor
 ## 11. Final Reporting
 
 The final report is built from checkpointed workflow evidence, including:
+
 - The proposal and its revision.
 - Human decisions.
 - Implementation result.
@@ -195,6 +208,7 @@ The final report is built from checkpointed workflow evidence, including:
 - Evidence references.
 
 The report distinguishes:
+
 - `passed`: approval, successful implementation, valid diff, and all required checks passed with no recorded failures.
 - `failed`: the workflow did not satisfy its required success conditions.
 - `rejected`: a human rejected the proposal.
