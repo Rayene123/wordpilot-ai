@@ -29,9 +29,9 @@ Analyzer = Callable[..., tuple[CodexExecutionResult, TaskProposal | Mapping[str,
 def new_workflow_state(
     task_description: str, repository_path: str | Path, *, max_plan_revisions: int = 2,
 ) -> DevWorkflowState:
-    task = task_description.strip()
-    if not task:
+    if not task_description.strip():
         raise ValueError("A non-empty task description is required.")
+    task = task_description
     repository = Path(repository_path).expanduser().resolve()
     if not repository.is_dir():
         raise ValueError("Repository path must be an existing directory.")

@@ -187,7 +187,7 @@ def test_preflight_does_not_require_git_status_from_codex(monkeypatch, tmp_path)
     assert cleanup == [(worktrees[0], True)]
 
 
-def test_preflight_retains_worktree_if_diagnostic_evidence_cannot_be_saved(monkeypatch, tmp_path):
+def test_preflight_cleans_worktree_if_diagnostic_evidence_cannot_be_saved(monkeypatch, tmp_path):
     repository, create, implement, collect, cleanup, worktrees = _setup(monkeypatch, tmp_path)
     evidence_file = tmp_path / "evidence-is-a-file"
     evidence_file.write_text("do not overwrite", encoding="utf-8")
@@ -198,6 +198,6 @@ def test_preflight_retains_worktree_if_diagnostic_evidence_cannot_be_saved(monke
 
     assert result.status == "failed"
     assert result.evidence_path is None
-    assert result.cleanup_status == "not_attempted"
-    assert worktrees[0].is_dir()
-    assert cleanup == []
+    assert result.cleanup_status == "removed"
+    assert not worktrees[0].exists()
+    assert cleanup == [(worktrees[0], False)]

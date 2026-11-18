@@ -123,12 +123,16 @@ def test_success_uses_read_only_cli_stdin_and_explicit_working_directory(monkeyp
     assert "--output-schema" in args
     assert "--output-last-message" in args
     assert args[-1] == "-"
-    assert args == [
-        "C:/tools/codex.exe", "exec", "--ephemeral", "--ignore-user-config",
+    expected = ["C:/tools/codex.exe", "exec", "--ephemeral", "--ignore-user-config"]
+    if codex_cli.sys.platform == "win32":
+        expected.extend(["--config", "windows.sandbox=elevated"])
+    expected.extend([
         "--sandbox", "read-only", "--json", "--output-schema",
         args[args.index("--output-schema") + 1], "--output-last-message",
         args[args.index("--output-last-message") + 1], "-",
-    ]
+    ])
+    assert args == expected
+    assert result.command_identity == args
     kwargs = captured["kwargs"]
     assert kwargs["shell"] is False
     assert kwargs["cwd"] == str(tmp_path.resolve())
@@ -152,6 +156,131 @@ def test_analysis_prompt_is_sent_as_exact_utf8_bytes_for_unicode_text(monkeypatc
     assert sent.decode("utf-8").encode("utf-8") == sent
 
 
+def test_analysis_prompt_preserves_multiline_task_text_exactly(monkeypatch, tmp_path):
+    task = "\n  Keep this line unchanged.  \n\nAcceptance criteria:\n- Preserve spacing.\n"
+    fake_run, captured = _fake_run_factory(message=_proposal_json())
+    _setup(monkeypatch, tmp_path, fake_run)
+
+    result, proposal = codex_cli.analyze_task(task, tmp_path)
+
+    prompt = captured["kwargs"]["input"].decode("utf-8")
+    assert result.status == "succeeded"
+    assert proposal is not None
+    assert f"Task:\n{task}\n\nHuman revision feedback" in prompt
+
+
+@pytest.mark.parametrize("blocked_command", [
+    "pwsh.exe -Command 'rg --files' rejected by sandbox policy",
+    "cmd.exe /c 'rg --files' rejected by sandbox policy",
+])
+def test_analysis_rejects_valid_proposal_when_windows_inspection_launch_is_blocked(
+    monkeypatch, tmp_path, blocked_command,
+):
+    fake_run, captured = _fake_run_factory(
+        message=_proposal_json(), stderr=blocked_command,
+    )
+    _setup(monkeypatch, tmp_path, fake_run)
+
+    result, proposal = codex_cli.analyze_task("Inspect the repository and propose a change", tmp_path)
+
+    assert result.exit_code == 0
+    assert result.status == "failed"
+    assert "execution-policy refusal during read-only analysis" in result.error
+    assert proposal is None
+    assert result.parsed_result is None
+    assert captured["command"][captured["command"].index("--sandbox") + 1] == "read-only"
+    assert captured["kwargs"]["shell"] is False
+
+
+def test_windows_analysis_uses_configured_sandbox_before_read_only(monkeypatch, tmp_path):
+    monkeypatch.setattr(codex_cli.sys, "platform", "win32")
+    monkeypatch.setenv("DEVFLOW_WINDOWS_SANDBOX", "elevated")
+    fake_run, captured = _fake_run_factory(message=_proposal_json())
+    _setup(monkeypatch, tmp_path, fake_run)
+
+    result, proposal = codex_cli.analyze_task("Inspect this repository", tmp_path)
+
+    args = captured["command"]
+    assert result.status == "succeeded"
+    assert proposal is not None
+    assert args[args.index("--config") + 1] == "windows.sandbox=elevated"
+    assert args.index("--config") < args.index("--sandbox")
+    assert args[args.index("--sandbox") + 1] == "read-only"
+    assert result.command_identity == args
+
+
+def test_windows_read_only_preflight_uses_configured_sandbox_before_read_only(monkeypatch, tmp_path):
+    monkeypatch.setattr(codex_cli.sys, "platform", "win32")
+    monkeypatch.setenv("DEVFLOW_WINDOWS_SANDBOX", "elevated")
+    observation = json.dumps({
+        "inspected_path": "README.md", "first_nonempty_line": "# Fixture",
+    })
+    fake_run, captured = _fake_run_factory(message=observation)
+    _setup(monkeypatch, tmp_path, fake_run)
+
+    result = codex_cli.run_read_only_preflight(tmp_path)
+
+    args = captured["command"]
+    assert result.status == "succeeded"
+    assert args[args.index("--config") + 1] == "windows.sandbox=elevated"
+    assert args.index("--config") < args.index("--sandbox")
+    assert args[args.index("--sandbox") + 1] == "read-only"
+    assert result.command_identity == args
+
+
+@pytest.mark.parametrize("operation", ["analysis", "preflight"])
+@pytest.mark.parametrize("setting", [None, "ELEVATED"])
+def test_windows_read_only_paths_fail_closed_on_invalid_sandbox_setting(
+    monkeypatch, tmp_path, operation, setting,
+):
+    monkeypatch.setattr(codex_cli.sys, "platform", "win32")
+    calls = []
+
+    def unexpected_subprocess(command, **kwargs):
+        calls.append(command)
+        raise AssertionError("Codex must not launch when Windows sandbox config is invalid.")
+
+    _setup(monkeypatch, tmp_path, unexpected_subprocess)
+    if setting is None:
+        monkeypatch.delenv("DEVFLOW_WINDOWS_SANDBOX", raising=False)
+    else:
+        monkeypatch.setenv("DEVFLOW_WINDOWS_SANDBOX", setting)
+
+    if operation == "analysis":
+        result, proposal = codex_cli.analyze_task("Inspect repository", tmp_path)
+        assert proposal is None
+    else:
+        result = codex_cli.run_read_only_preflight(tmp_path)
+
+    assert result.status == "failed"
+    assert result.exit_code is None
+    assert "DEVFLOW_WINDOWS_SANDBOX" in result.error
+    assert result.command_identity[result.command_identity.index("--sandbox") + 1] == "read-only"
+    assert calls == []
+
+
+@pytest.mark.parametrize("operation", ["analysis", "preflight"])
+def test_non_windows_read_only_command_has_no_windows_configuration(monkeypatch, tmp_path, operation):
+    monkeypatch.setattr(codex_cli.sys, "platform", "linux")
+    monkeypatch.delenv("DEVFLOW_WINDOWS_SANDBOX", raising=False)
+    message = _proposal_json() if operation == "analysis" else json.dumps({
+        "inspected_path": "README.md", "first_nonempty_line": "# Fixture",
+    })
+    fake_run, captured = _fake_run_factory(message=message)
+    _setup(monkeypatch, tmp_path, fake_run)
+
+    if operation == "analysis":
+        result, _proposal = codex_cli.analyze_task("Inspect repository", tmp_path)
+    else:
+        result = codex_cli.run_read_only_preflight(tmp_path)
+
+    args = captured["command"]
+    assert result.status == "succeeded"
+    assert "--config" not in args
+    assert args[args.index("--sandbox") + 1] == "read-only"
+    assert result.command_identity == args
+
+
 def test_reanalysis_includes_human_feedback_and_previous_proposal(monkeypatch, tmp_path):
     fake_run, captured = _fake_run_factory(message=_proposal_json())
     _setup(monkeypatch, tmp_path, fake_run)
@@ -161,7 +290,12 @@ def test_reanalysis_includes_human_feedback_and_previous_proposal(monkeypatch, t
     prompt = captured["kwargs"]["input"].decode("utf-8")
     assert "Narrow the scope." in prompt
     assert "Earlier plan" in prompt
-    assert "do not execute repository commands or edit files" in prompt
+    assert "do not run project commands or edit files" in prompt
+    assert "On Windows, list relevant repository files with `rg --files`" in prompt
+    assert "read or search file content with `rg -n` or `rg -n -C`" in prompt
+    for blocked_command in ("Get-Content", "Get-ChildItem", "Select-String"):
+        assert blocked_command in prompt
+    assert "shell command workarounds for repository inspection" in prompt
     assert "Implementation may occur only after explicit human approval" in prompt
     assert "Host-controlled verification may run after implementation" in prompt
     assert "Do not say that read-only analysis restrictions prohibit later host verification" in prompt
@@ -194,6 +328,9 @@ def test_implementation_uses_workspace_write_only_in_supplied_worktree(monkeypat
         args[args.index("--output-last-message") + 1], "-",
     ])
     assert args == expected
+    assert result.command_identity == args
+    if codex_cli.sys.platform == "win32":
+        assert args.index("--config") < args.index("--sandbox")
     assert args[args.index("--sandbox") + 1] == "workspace-write"
     assert "--ask-for-approval" not in args
     assert "--approve-for-me" not in args
@@ -235,6 +372,8 @@ def test_windows_implementation_passes_validated_sandbox_config(
     args = captured["command"]
     assert result.status == "succeeded"
     assert args[args.index("--config") + 1] == f"windows.sandbox={implementation}"
+    assert result.command_identity == args
+    assert args.index("--config") < args.index("--sandbox")
     assert "--ignore-user-config" in args
     assert args[args.index("--sandbox") + 1] == "workspace-write"
     assert captured["kwargs"]["cwd"] == str(worktree.resolve())
@@ -306,18 +445,64 @@ def test_non_windows_implementation_does_not_require_or_pass_windows_sandbox_set
     assert captured["kwargs"]["cwd"] == str(worktree.resolve())
 
 
-@pytest.mark.parametrize("output", [
-    '{"type":"item.completed","item":{"type":"agent_message","text":"The workspace is mounted read-only."}}',
-    '{"type":"item.completed","item":{"type":"command_execution","error":"Rejected: blocked by policy"}}',
-    "Codex sandbox rejected the write request.",
-    "Permission denied while creating the approved file.",
-    "PowerShell command rejected by environment policy.",
-    "Windows sandbox implementation is unavailable.",
-    "windows.sandbox implementation is not allowed by managed policy.",
-    '{"error":"environment policy blocked command execution","exit_code":0}',
+@pytest.mark.parametrize(("stdout", "stderr", "last_message"), [
+    ('{"type":"turn.failed","error":"The workspace is mounted read-only."}', "", ""),
+    ('{"type":"error","message":"Rejected: blocked by policy"}', "", ""),
+    ("", "", "Codex sandbox rejected the write request."),
+    ("", "Permission denied while creating the approved file.", ""),
+    ("", "PowerShell command rejected by environment policy.", ""),
+    ("", "Windows sandbox implementation is unavailable.", ""),
+    ("", "windows.sandbox implementation is not allowed by managed policy.", ""),
+    ("", '{"error":"environment policy blocked command execution","exit_code":0}', ""),
 ])
-def test_explicit_execution_failures_are_detected_despite_zero_exit(output):
-    assert codex_cli._explicit_execution_failure(output) is not None
+def test_explicit_execution_failures_are_detected_despite_zero_exit(stdout, stderr, last_message):
+    assert codex_cli._explicit_execution_failure(stdout, stderr, last_message) is not None
+
+
+def test_failed_intermediate_command_does_not_override_successful_codex_response(monkeypatch, tmp_path):
+    worktree = tmp_path / "repo" / ".devflow-worktrees" / "run"
+    worktree.mkdir(parents=True)
+    proposal = TaskProposal.model_validate(json.loads(_proposal_json()))
+    stdout = "\n".join([
+        json.dumps({
+            "type": "item.completed",
+            "item": {
+                "type": "command_execution", "status": "failed", "exit_code": 1,
+                "aggregated_output": "rg is not recognized as the name of a cmdlet.",
+            },
+        }),
+        json.dumps({
+            "type": "item.completed",
+            "item": {
+                "type": "command_execution", "status": "completed", "exit_code": 0,
+                "aggregated_output": "Inspected source text: the workspace is mounted read-only.",
+            },
+        }),
+    ])
+    final_message = "Created dev_workflow/VERIFICATION_LIFECYCLE.md with the requested lifecycle details."
+    fake_run, _ = _fake_run_factory(returncode=0, message=final_message, stdout=stdout)
+    _setup(monkeypatch, tmp_path, fake_run)
+    monkeypatch.setattr(codex_cli, "_validate_worktree_root", lambda _: True)
+
+    result = codex_cli.implement_approved_plan(
+        proposal, proposal_fingerprint(proposal), worktree,
+    )
+
+    assert result.exit_code == 0
+    assert result.status == "succeeded"
+    assert result.last_message == final_message
+
+
+def test_intermediate_command_policy_text_is_not_a_turn_level_refusal():
+    stdout = json.dumps({
+        "type": "item.completed",
+        "item": {
+            "type": "command_execution", "status": "failed", "exit_code": 1,
+            "aggregated_output": "PowerShell command rejected by environment policy.",
+        },
+    })
+
+    assert codex_cli._explicit_execution_failure(stdout, "", "Completed successfully.") is None
 
 
 def test_implementation_marks_zero_exit_policy_rejection_failed(monkeypatch, tmp_path):
@@ -433,6 +618,7 @@ def test_review_uses_review_specific_supported_argument_list(monkeypatch, tmp_pa
 
 def test_missing_executable_returns_safe_failure(monkeypatch, tmp_path):
     monkeypatch.delenv("CODEX_CLI_PATH", raising=False)
+    monkeypatch.setenv("DEVFLOW_WINDOWS_SANDBOX", "elevated")
     monkeypatch.setattr(codex_cli.shutil, "which", lambda _: None)
     result, proposal = codex_cli.analyze_task("Task", tmp_path)
     assert result.status == "failed"

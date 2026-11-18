@@ -458,6 +458,46 @@ class WriteCapabilityPreflightResult(BaseModel):
         return self
 
 
+class ReadOnlyProbeResult(BaseModel):
+    """The intentionally small structured observation from live read-only probing."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    inspected_path: Literal["README.md"]
+    first_nonempty_line: StrictStr = Field(min_length=1, max_length=240)
+
+
+class LiveCodexPreflightReport(BaseModel):
+    """Host-observed Codex execution readiness; help output is not execution evidence."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    overall_status: Literal["passed", "failed"]
+    cli_status: Literal["available", "unavailable"]
+    authentication_status: Literal["passed", "failed", "process_launch_denied", "skipped"]
+    read_only_status: Literal[
+        "passed", "process_launch_denied", "sandbox_denied", "invalid_result", "failed", "skipped",
+    ]
+    workspace_write_status: Literal[
+        "passed", "process_launch_denied", "sandbox_denied", "failed", "skipped",
+    ]
+    read_only_detail: StrictStr = Field(max_length=1_000)
+    workspace_write_detail: StrictStr = Field(max_length=1_000)
+    write_evidence_path: StrictStr | None = Field(default=None, max_length=2_048)
+
+    @model_validator(mode="after")
+    def validate_overall_status(self) -> "LiveCodexPreflightReport":
+        all_passed = (
+            self.cli_status == "available"
+            and self.authentication_status == "passed"
+            and self.read_only_status == "passed"
+            and self.workspace_write_status == "passed"
+        )
+        if (self.overall_status == "passed") != all_passed:
+            raise ValueError("Preflight can pass only when both live operations and authentication pass.")
+        return self
+
+
 def proposal_fingerprint(proposal: TaskProposal, *, revision: int = 0) -> str:
     """Fingerprint the validated plan together with its workflow revision number."""
     if type(revision) is not int or revision < 0:

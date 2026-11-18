@@ -8,7 +8,7 @@ from .checkpointing import (
     resume_pending_approval,
 )
 from .graph import build_dev_workflow, new_workflow_state, workflow_config
-from .preflight import run_write_capability_preflight
+from .preflight import run_live_codex_preflight, run_write_capability_preflight
 from .schemas import (
     CodexExecutionResult,
     TaskProposal,
@@ -47,4 +47,5 @@ __all__ = [
     "open_sqlite_checkpointer",
     "resume_pending_approval",
     "run_write_capability_preflight",
+    "run_live_codex_preflight",
 ]

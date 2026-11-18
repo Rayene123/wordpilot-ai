@@ -9,13 +9,20 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable
 
-from .codex_cli import implement_approved_plan
+from .codex_cli import (
+    check_codex_authentication,
+    implement_approved_plan,
+    resolve_codex_executable,
+    run_read_only_preflight,
+)
 from .schemas import (
     CodexExecutionResult,
     DiffReport,
     ExpectedFileChange,
     FileScope,
     ImplementationStep,
+    LiveCodexPreflightReport,
+    ReadOnlyProbeResult,
     TaskProposal,
     TechnicalDecision,
     WriteCapabilityPreflightResult,
@@ -63,6 +70,110 @@ def _expected_marker_diff(marker_path: str, marker_contents: str) -> str:
         [], marker_contents.splitlines(keepends=True),
         fromfile="/dev/null", tofile=f"b/{marker_path}",
     ))
+
+
+def _classify_execution_error(error: str | None, *, invalid_result: bool = False) -> str:
+    if invalid_result:
+        return "invalid_result"
+    lowered = (error or "").casefold()
+    if "invalid structured" in lowered or "did not return the structured" in lowered:
+        return "invalid_result"
+    if "could not be started" in lowered or "process launch" in lowered:
+        return "process_launch_denied"
+    if "sandbox" in lowered or "execution-policy" in lowered or "policy refusal" in lowered:
+        return "sandbox_denied"
+    return "failed"
+
+
+def _first_readme_line(repository: Path) -> str | None:
+    path = repository / "README.md"
+    if path.is_symlink() or not path.is_file():
+        return None
+    try:
+        with path.open("r", encoding="utf-8") as stream:
+            for _ in range(12):
+                line = stream.readline(242)
+                if not line:
+                    break
+                if line.strip():
+                    value = line.strip()
+                    return value if len(value) <= 240 else None
+    except (OSError, UnicodeError):
+        return None
+    return None
+
+
+def run_live_codex_preflight(
+    repository_path: str | Path,
+    *,
+    authentication_check: Callable[..., tuple[str, str]] = check_codex_authentication,
+    read_only_probe: Callable[..., CodexExecutionResult] = run_read_only_preflight,
+    write_probe: Callable[..., WriteCapabilityPreflightResult] | None = None,
+) -> LiveCodexPreflightReport:
+    """Prove live CLI auth, bounded read-only inspection, and isolated write access."""
+    repository = Path(repository_path).expanduser().resolve()
+    executable, resolution_error = resolve_codex_executable()
+    if executable is None:
+        return LiveCodexPreflightReport(
+            overall_status="failed", cli_status="unavailable", authentication_status="skipped",
+            read_only_status="skipped", workspace_write_status="skipped",
+            read_only_detail=resolution_error or "Codex CLI is unavailable.",
+            workspace_write_detail="Skipped because Codex CLI is unavailable.",
+        )
+
+    authentication_status, authentication_detail = authentication_check(executable, repository)
+    if authentication_status != "passed":
+        return LiveCodexPreflightReport(
+            overall_status="failed", cli_status="available",
+            authentication_status=authentication_status,
+            read_only_status="skipped", workspace_write_status="skipped",
+            read_only_detail="Skipped because Codex authentication failed.",
+            workspace_write_detail=(authentication_detail or "Codex authentication failed.")[:1_000],
+        )
+
+    try:
+        observed_line = _first_readme_line(repository)
+        read_result = CodexExecutionResult.model_validate(read_only_probe(repository, executable=executable))
+        if read_result.status == "succeeded" and read_result.parsed_result is not None:
+            try:
+                observation = ReadOnlyProbeResult.model_validate(read_result.parsed_result)
+                if observed_line is None or observation.first_nonempty_line != observed_line:
+                    raise ValueError("The bounded repository observation did not match host content.")
+                read_status = "passed"
+                read_detail = "Codex inspected the first non-empty line of README.md within its first 12 lines; structured result matched host content."
+            except (TypeError, ValueError):
+                read_status = "invalid_result"
+                read_detail = "Codex read-only operation returned a mismatched or invalid structured observation."
+        else:
+            read_status = _classify_execution_error(read_result.error)
+            read_detail = read_result.error or "Codex read-only operation failed."
+    except Exception as exc:
+        read_status = "failed"
+        read_detail = f"Read-only preflight could not complete safely ({type(exc).__name__})."
+
+    try:
+        runner = write_probe or run_write_capability_preflight
+        write_result = WriteCapabilityPreflightResult.model_validate(runner(repository))
+    except Exception as exc:
+        write_result = None
+        write_error = f"Workspace-write preflight could not complete safely ({type(exc).__name__})."
+    else:
+        write_error = ""
+    if write_result and write_result.status == "passed":
+        write_status = "passed"
+        write_detail = "Codex created the exact marker in a disposable worktree; host diff validation passed and the worktree was removed."
+    else:
+        execution_error = write_result.execution_result.error if write_result and write_result.execution_result else None
+        write_status = _classify_execution_error(execution_error)
+        write_detail = execution_error or ("; ".join(write_result.errors) if write_result else "") or write_error or "Workspace-write preflight failed safe validation or cleanup."
+
+    overall = "passed" if read_status == "passed" and write_status == "passed" else "failed"
+    return LiveCodexPreflightReport(
+        overall_status=overall, cli_status="available", authentication_status="passed",
+        read_only_status=read_status, workspace_write_status=write_status,
+        read_only_detail=read_detail[:1_000], workspace_write_detail=write_detail[:1_000],
+        write_evidence_path=write_result.evidence_path if write_result else None,
+    )
 
 
 def run_write_capability_preflight(
@@ -166,10 +277,10 @@ def run_write_capability_preflight(
         evidence_path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
         evidence_saved = True
     except OSError:
-        errors.append("Preflight evidence could not be saved; the disposable worktree was retained.")
+        errors.append("Preflight evidence could not be saved; cleanup will still be attempted.")
         cleanup_status = "not_attempted" if created_worktree else "not_created"
 
-    if evidence_saved and created_worktree and worktree_path is not None:
+    if created_worktree and worktree_path is not None:
         try:
             remove_worktree(repository, worktree_path, preflight_run_id)
             cleanup_status = "removed"

@@ -58,7 +58,7 @@ The frontend reads `NEXT_PUBLIC_WORDPILOT_API_URL` from `frontend/.env.local` (d
 
 ## DevFlow development orchestrator
 
-`dev_workflow/` is an optional, separate Python package for orchestrating software-development tasks with Codex CLI. It is not part of WordPilot's DOCX backend and does not use the Groq/Ollama document-editing providers. The package exposes its LangGraph workflow as a Python API; it does not provide a standalone task CLI or UI. WordPilot's DOCX application does not require Codex. DevFlow requires the evaluator to install and authenticate Codex CLI independently; this repository does not install it, provide credentials, or inherit another developer's login.
+`dev_workflow/` is an optional, separate Python package for orchestrating software-development tasks with Codex CLI. It is not part of WordPilot's DOCX backend and does not use the Groq/Ollama document-editing providers. WordPilot's DOCX application does not require Codex. DevFlow requires the evaluator to install and authenticate Codex CLI independently; this repository does not install it, provide credentials, or inherit another developer's login.
 
 ### Architecture overview
 
@@ -117,9 +117,27 @@ Choose a backend that is available and permitted by the host: use `mxc` when sup
 
 The diagnostic's `workspace_write_capability` result only checks CLI help. It does not prove that Codex can successfully write in the current host environment. For the optional manual marker-write preflight and its evidence details, see the single canonical section below. The workflow does not run preflight automatically before implementation.
 
-Run all repository tests with `python -m pytest -q`. Start the document-editing backend with `python -m uvicorn backend.api:app --host 127.0.0.1 --port 8000`; this does not require Codex CLI. DevFlow itself is currently invoked through the Python API shown below and has no standalone `run` command.
+Run all repository tests with `python -m pytest -q`. Start the document-editing backend with `python -m uvicorn backend.api:app --host 127.0.0.1 --port 8000`; this does not require Codex CLI.
+
+### Interactive DevFlow CLI
+
+From a clean clone, install Python 3.12, Git, and Codex CLI, sign in with `codex login`, then install the repository dependencies. The CLI uses only this checkout's APIs and stores restartable approvals in `.devflow/checkpoints.sqlite3`:
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+py -3.12 -m dev_workflow
+```
+
+On Linux, create and install into a Python 3.12 virtual environment (`python3.12 -m venv .venv`, `. .venv/bin/activate`, `python -m pip install -r requirements.txt`) and launch with `python -m dev_workflow`. If PowerShell blocks activation, invoke `.venv\Scripts\python.exe` directly; activation is optional. On Windows, set `DEVFLOW_WINDOWS_SANDBOX` to an allowed backend before implementation, as described above.
+
+The menu provides these actions: `1` check environment, `2` start a task, `3` review a pending approval, `4` resume a saved workflow, `5` inspect status/report, `6` run configured verification in a registered implementation worktree, and `7` exit. The approval screen shows the exact proposal and file scope before accepting approve, reject, or change requests. Implementation starts only after approval and runs in the registered detached worktree. Verification checks are fixed by the host (`python -m pytest -q` and `npm run typecheck`); a manual verification rerun is displayed in the terminal and does not replace the workflow's checkpointed report evidence.
+
+End-to-end code-generation demo: launch `py -3.12 -m dev_workflow`, choose `2`, and enter `Create hello.py that prints Hello, DevFlow!`. Review the proposed file and scope, then choose `1` to approve. DevFlow implements only after approval in `.devflow-worktrees/<run-id>`, validates the resulting diff, runs its configured checks, and prints the final report. If the session is interrupted, use menu item `4` to select the saved run; no UUID copying is needed.
 
 The repository has no published OS support matrix, and a clean clone has not been verified across Windows, Linux, and macOS. Treat the commands above as setup guidance, not a cross-platform support claim. Windows sandbox behavior depends on the host Codex sandbox backend and managed execution policy; inspect and configure these on the evaluator's machine. DevFlow does not change those settings. Linux and macOS operation, including sandbox capabilities, must be verified on those hosts before claiming support.
+
+For a reproducible Windows CTO demonstration of generated Python source, approval, isolated worktree execution, checkpointing, validation, verification, and reporting, follow the dedicated [DevFlow CTO demo guide](docs/DEVFLOW_CTO_DEMO.md).
 
 DevFlow approvals use a persistent SQLite LangGraph checkpointer. The host must select and reuse the same database file and workflow run ID to resume an approval after restarting the process. The default local developer location is `.devflow/checkpoints.sqlite3`; this directory is ignored by Git. Evidence JSON files are for inspection and are never used as approval tokens. Open and close the saver around each process lifecycle:
 
