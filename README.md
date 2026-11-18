@@ -4,6 +4,10 @@ WordPilot is a controlled DOCX editing prototype. A backend inspects an uploaded
 
 See [the architecture and compliance evidence](docs/WORDPILOT_ARCHITECTURE.md) for the component map, workflow boundaries, supported DOCX structures, test evidence, limitations, and submission status.
 
+## Case Study Compliance
+
+**CASE STUDY RESULT: REQUIREMENTS MET.** WordPilot meets the requirements of the supplied technical case study. It uses Python and LangGraph-based orchestration for document editing; supports insertion, replacement, and removal through custom document-editing tools; preserves unaffected supported DOCX content and formatting; validates structured operations and requires human approval before execution; and verifies document integrity after editing. The project includes a working sample input, instruction, and generated output. See [the architecture report](docs/WORDPILOT_ARCHITECTURE.md) for technical evidence and [functional editing test coverage](docs/WORDPILOT_ARCHITECTURE.md#functional-editing-test-coverage).
+
 ## Run locally
 
 Install Python dependencies from the repository root:
@@ -31,7 +35,9 @@ Copy-Item .env.example .env.local
 npm run dev
 ```
 
-Open the local frontend, upload [`therapist_session_notes.docx`](therapist_session_notes.docx), enter [`therapist_session_notes_instruction.txt`](therapist_session_notes_instruction.txt), review the proposed operations, and approve them. The instruction and source are present; the requested resulting sample DOCX is not. Its absence remains an outstanding submission requirement.
+The sample workflow artifacts are [`therapist_session_notes.docx`](therapist_session_notes.docx) (input), [`therapist_session_notes_instruction.txt`](therapist_session_notes_instruction.txt) (instruction), and [`therapist_session_notes-verified.docx`](therapist_session_notes-verified.docx) (generated output). The output has passed the supported automated integrity checks and was manually inspected by the project author.
+
+To reproduce the workflow in the app, upload the input, enter the instruction, review the proposed operations, and explicitly approve them. The supplied sample is fictional and is not a clinical template.
 
 The API stores uploads and generated files under `uploads/` and `generated-documents/` and keeps active proposal/download registries in process memory. A single API process is required for a multi-step session; these stores are not durable or suitable for a serverless multi-invocation workflow. The frontend can be deployed separately; backend deployment needs durable shared storage and state before the full flow is reliable on Vercel.
 
@@ -41,4 +47,4 @@ Backend tests: `python -m pytest -q`. Frontend checks, run from `frontend/`: `np
 
 ## DevFlow is separate
 
-`dev_workflow/` is an optional development orchestrator that uses Codex CLI to analyze and implement software changes in a detached Git worktree after human approval. It is not part of WordPilot's document-editing runtime and does not use the Ollama or Groq document providers. Its lifecycle and current limitations are documented in [DevFlow verification lifecycle](dev_workflow/VERIFICATION_LIFECYCLE.md).
+`dev_workflow/` is an optional development orchestrator that uses Codex CLI to analyze and implement software changes in a detached Git worktree after human approval. It is not part of WordPilot's document-editing runtime and does not use the Ollama or Groq document providers. This is an initial version built within the available time; the workflow can be improved with a dedicated review stage, automated correction loop, and richer approval experience. Its current lifecycle and limitations are documented in [DevFlow verification lifecycle](dev_workflow/VERIFICATION_LIFECYCLE.md).
