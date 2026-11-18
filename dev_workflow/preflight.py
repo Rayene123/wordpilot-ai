@@ -26,12 +26,21 @@ from .worktree import collect_worktree_diff, create_worktree, remove_worktree
 
 def _preflight_proposal(marker_path: str, marker_contents: str) -> TaskProposal:
     return TaskProposal(
-        task_summary="Check that Codex can write inside an isolated DevFlow worktree.",
-        requirements=[f"Create only {marker_path} with the exact approved contents."],
+        task_summary=(
+            "Check that Codex can write inside an isolated DevFlow worktree by creating one marker. "
+            "Do not run Git commands; the host verifies the resulting diff."
+        ),
+        requirements=[
+            f"Create only {marker_path} with the exact approved contents.",
+            "Do not run git status or any other Git command; host-side diff validation is authoritative.",
+        ],
         acceptance_criteria=[f"{marker_path} contains exactly {marker_contents!r}."],
         implementation_steps=[ImplementationStep(
             order=1,
-            description=f"Create {marker_path} with exactly {marker_contents!r}; make no other changes.",
+            description=(
+                f"Create {marker_path} with exactly {marker_contents!r}; make no other changes. "
+                "Do not run git status or any other Git command; the host validates the diff."
+            ),
         )],
         expected_files=[ExpectedFileChange(
             path=marker_path,
@@ -43,7 +52,9 @@ def _preflight_proposal(marker_path: str, marker_contents: str) -> TaskProposal:
             decision="Use one uniquely named plain-text marker.",
             rationale="The host can verify the exact bytes and complete Git diff.",
         )],
-        testing_strategy=["The host checks exact marker contents and validates the complete diff."],
+        testing_strategy=[
+            "The host checks exact marker contents and validates the complete diff; no Git command is needed from Codex."
+        ],
     )
 
 
@@ -107,7 +118,8 @@ def run_write_capability_preflight(
 
         if marker.is_file() and not marker.is_symlink():
             try:
-                marker_verified = marker.read_bytes() == marker_contents.encode("utf-8")
+                actual_marker = marker.read_bytes().replace(b"\r\n", b"\n")
+                marker_verified = actual_marker == marker_contents.encode("utf-8")
             except OSError:
                 marker_verified = False
         if not marker_verified:
@@ -120,7 +132,7 @@ def run_write_capability_preflight(
                 and len(diff.changed_files) == 1
                 and diff.changed_files[0].path == marker_path
                 and diff.changed_files[0].action == "create"
-                and diff.diff == _expected_marker_diff(marker_path, marker_contents)
+                and diff.diff.replace("\r\n", "\n") == _expected_marker_diff(marker_path, marker_contents)
             )
         except Exception:
             diff = DiffReport(
@@ -171,9 +183,9 @@ def run_write_capability_preflight(
     guidance = None
     if status == "failed":
         guidance = (
-            "On Windows, investigate the host-controlled Codex windows.sandbox backend selection "
-            "and managed execution policy. DevFlow did not change sandbox configuration or retry "
-            "with weaker permissions."
+            "On Windows, set DEVFLOW_WINDOWS_SANDBOX to mxc, elevated, or unelevated, then confirm "
+            "the selected windows.sandbox backend is available and permitted by host or managed "
+            "policy. DevFlow did not change sandbox configuration or retry with another backend."
         )
     result = WriteCapabilityPreflightResult(
         status=status,

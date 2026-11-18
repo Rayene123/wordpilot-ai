@@ -13,6 +13,7 @@ from dev_workflow.schemas import TaskProposal, proposal_fingerprint
 _EXEC_HELP = """Options:
 --ephemeral
 --ignore-user-config
+-c, --config <key=value>
 --sandbox <SANDBOX_MODE>
 possible values: read-only, workspace-write
 --json
@@ -66,6 +67,7 @@ def _fake_run_factory(*, returncode=0, message=None, stdout="event", stderr=""):
 
 def _setup(monkeypatch, tmp_path, fake_run):
     monkeypatch.delenv("CODEX_CLI_PATH", raising=False)
+    monkeypatch.setenv("DEVFLOW_WINDOWS_SANDBOX", "elevated")
     monkeypatch.setattr(codex_cli.shutil, "which", lambda _: "C:/tools/codex.exe")
     monkeypatch.setattr(codex_cli.subprocess, "run", fake_run)
     return tmp_path
@@ -130,8 +132,24 @@ def test_success_uses_read_only_cli_stdin_and_explicit_working_directory(monkeyp
     kwargs = captured["kwargs"]
     assert kwargs["shell"] is False
     assert kwargs["cwd"] == str(tmp_path.resolve())
-    assert "Add a response field" in kwargs["input"]
-    assert kwargs["text"] is True
+    assert isinstance(kwargs["input"], bytes)
+    assert "Add a response field" in kwargs["input"].decode("utf-8")
+    assert "text" not in kwargs
+
+
+def test_analysis_prompt_is_sent_as_exact_utf8_bytes_for_unicode_text(monkeypatch, tmp_path):
+    task = "Update naïve façade; Zoë’s résumé — 你好 مرحبا"
+    fake_run, captured = _fake_run_factory(message=_proposal_json())
+    _setup(monkeypatch, tmp_path, fake_run)
+
+    result, proposal = codex_cli.analyze_task(task, tmp_path)
+
+    sent = captured["kwargs"]["input"]
+    assert result.status == "succeeded"
+    assert proposal is not None
+    assert isinstance(sent, bytes)
+    assert task.encode("utf-8") in sent
+    assert sent.decode("utf-8").encode("utf-8") == sent
 
 
 def test_reanalysis_includes_human_feedback_and_previous_proposal(monkeypatch, tmp_path):
@@ -140,7 +158,7 @@ def test_reanalysis_includes_human_feedback_and_previous_proposal(monkeypatch, t
     result, _ = codex_cli.analyze_task("Task", tmp_path, feedback="Narrow the scope.",
                                        previous_proposal={"task_summary": "Earlier plan"})
     assert result.status == "succeeded"
-    prompt = captured["kwargs"]["input"]
+    prompt = captured["kwargs"]["input"].decode("utf-8")
     assert "Narrow the scope." in prompt
     assert "Earlier plan" in prompt
     assert "do not execute repository commands or edit files" in prompt
@@ -168,20 +186,124 @@ def test_implementation_uses_workspace_write_only_in_supplied_worktree(monkeypat
     result = codex_cli.implement_approved_plan(proposal, fingerprint, worktree)
     args = captured["command"]
     assert result.status == "succeeded"
-    assert args == [
-        "C:/tools/codex.exe", "exec", "--ephemeral", "--ignore-user-config",
+    expected = ["C:/tools/codex.exe", "exec", "--ephemeral", "--ignore-user-config"]
+    if codex_cli.sys.platform == "win32":
+        expected.extend(["--config", "windows.sandbox=elevated"])
+    expected.extend([
         "--sandbox", "workspace-write", "--json", "--output-last-message",
         args[args.index("--output-last-message") + 1], "-",
-    ]
+    ])
+    assert args == expected
     assert args[args.index("--sandbox") + 1] == "workspace-write"
     assert "--ask-for-approval" not in args
     assert "--approve-for-me" not in args
     assert "--dangerously-bypass-approvals-and-sandbox" not in args
     assert captured["kwargs"]["cwd"] == str(worktree.resolve())
     assert captured["kwargs"]["shell"] is False
-    assert fingerprint in captured["kwargs"]["input"]
+    sent = captured["kwargs"]["input"]
+    assert isinstance(sent, bytes)
+    assert fingerprint.encode("utf-8") in sent
+    assert sent.decode("utf-8").encode("utf-8") == sent
+    assert "text" not in captured["kwargs"]
     assert result.command_identity[args.index("--sandbox") + 1] == "workspace-write"
     assert captured["help_commands"] == [["C:/tools/codex.exe", "exec", "--help"]]
+
+
+@pytest.mark.parametrize("implementation", ["mxc", "elevated", "unelevated"])
+def test_windows_implementation_passes_validated_sandbox_config(
+    monkeypatch, tmp_path, implementation,
+):
+    monkeypatch.setattr(codex_cli.sys, "platform", "win32")
+    root = tmp_path / "repo"
+    worktree = root / ".devflow-worktrees" / "worktree"
+    worktree.mkdir(parents=True)
+    proposal = TaskProposal.model_validate(json.loads(_proposal_json()))
+    fake_run, captured = _fake_run_factory(message="implementation complete")
+    _setup(monkeypatch, tmp_path, fake_run)
+    monkeypatch.setenv("DEVFLOW_WINDOWS_SANDBOX", implementation)
+    base_run = codex_cli.subprocess.run
+
+    def fake_git_and_codex(command, **kwargs):
+        if command[0] == "git":
+            return subprocess.CompletedProcess(command, 0, stdout=str(worktree).encode())
+        return base_run(command, **kwargs)
+
+    monkeypatch.setattr(codex_cli.subprocess, "run", fake_git_and_codex)
+    result = codex_cli.implement_approved_plan(
+        proposal, proposal_fingerprint(proposal), worktree,
+    )
+    args = captured["command"]
+    assert result.status == "succeeded"
+    assert args[args.index("--config") + 1] == f"windows.sandbox={implementation}"
+    assert "--ignore-user-config" in args
+    assert args[args.index("--sandbox") + 1] == "workspace-write"
+    assert captured["kwargs"]["cwd"] == str(worktree.resolve())
+    assert captured["kwargs"]["shell"] is False
+    assert not {
+        "--approve-for-me", "--dangerously-bypass-approvals-and-sandbox",
+        "--dangerously-bypass-hook-trust", "--yolo", "--full-auto",
+    }.intersection(args)
+    assert "danger-full-access" not in args
+
+
+@pytest.mark.parametrize("implementation", [None, "", " Elevated", "ELEVATED", "danger-full-access"])
+def test_windows_implementation_rejects_missing_or_invalid_sandbox_setting_before_subprocess(
+    monkeypatch, tmp_path, implementation,
+):
+    monkeypatch.setattr(codex_cli.sys, "platform", "win32")
+    calls = []
+
+    def unexpected_subprocess(command, **kwargs):
+        calls.append(command)
+        raise AssertionError("Subprocess must not run for invalid Windows sandbox configuration.")
+
+    _setup(monkeypatch, tmp_path, unexpected_subprocess)
+    if implementation is None:
+        monkeypatch.delenv("DEVFLOW_WINDOWS_SANDBOX", raising=False)
+    else:
+        monkeypatch.setenv("DEVFLOW_WINDOWS_SANDBOX", implementation)
+    worktree = tmp_path / "repo" / ".devflow-worktrees" / "run"
+    worktree.mkdir(parents=True)
+    proposal = TaskProposal.model_validate(json.loads(_proposal_json()))
+
+    result = codex_cli.implement_approved_plan(
+        proposal, proposal_fingerprint(proposal), worktree,
+    )
+
+    assert result.status == "failed"
+    assert result.exit_code is None
+    assert "DEVFLOW_WINDOWS_SANDBOX" in result.error
+    assert calls == []
+
+
+def test_non_windows_implementation_does_not_require_or_pass_windows_sandbox_setting(
+    monkeypatch, tmp_path,
+):
+    monkeypatch.setattr(codex_cli.sys, "platform", "linux")
+    root = tmp_path / "repo"
+    worktree = root / ".devflow-worktrees" / "worktree"
+    worktree.mkdir(parents=True)
+    proposal = TaskProposal.model_validate(json.loads(_proposal_json()))
+    fake_run, captured = _fake_run_factory(message="implementation complete")
+    _setup(monkeypatch, tmp_path, fake_run)
+    monkeypatch.delenv("DEVFLOW_WINDOWS_SANDBOX", raising=False)
+    base_run = codex_cli.subprocess.run
+
+    def fake_git_and_codex(command, **kwargs):
+        if command[0] == "git":
+            return subprocess.CompletedProcess(command, 0, stdout=str(worktree).encode())
+        return base_run(command, **kwargs)
+
+    monkeypatch.setattr(codex_cli.subprocess, "run", fake_git_and_codex)
+    result = codex_cli.implement_approved_plan(
+        proposal, proposal_fingerprint(proposal), worktree,
+    )
+
+    assert result.status == "succeeded"
+    assert "--config" not in captured["command"]
+    assert "--ignore-user-config" in captured["command"]
+    assert captured["command"][captured["command"].index("--sandbox") + 1] == "workspace-write"
+    assert captured["kwargs"]["cwd"] == str(worktree.resolve())
 
 
 @pytest.mark.parametrize("output", [
@@ -190,6 +312,8 @@ def test_implementation_uses_workspace_write_only_in_supplied_worktree(monkeypat
     "Codex sandbox rejected the write request.",
     "Permission denied while creating the approved file.",
     "PowerShell command rejected by environment policy.",
+    "Windows sandbox implementation is unavailable.",
+    "windows.sandbox implementation is not allowed by managed policy.",
     '{"error":"environment policy blocked command execution","exit_code":0}',
 ])
 def test_explicit_execution_failures_are_detected_despite_zero_exit(output):
@@ -203,9 +327,9 @@ def test_implementation_marks_zero_exit_policy_rejection_failed(monkeypatch, tmp
     proposal = TaskProposal.model_validate(json.loads(_proposal_json()))
     fake_run, _ = _fake_run_factory(
         returncode=0,
-        message="I could not create the file because the workspace is mounted read-only.",
+        message="This session has read-only file access and cannot implement the approved change.",
         stdout='{"type":"item.completed","item":{"type":"agent_message","text":"No files changed."}}',
-        stderr='CreateProcess rejected: blocked by policy',
+        stderr="PowerShell command rejected by policy.",
     )
     _setup(monkeypatch, tmp_path, fake_run)
     monkeypatch.setattr(codex_cli, "_validate_worktree_root", lambda _: True)
@@ -214,7 +338,49 @@ def test_implementation_marks_zero_exit_policy_rejection_failed(monkeypatch, tmp
     )
     assert result.exit_code == 0
     assert result.status == "failed"
-    assert "blocked by the active sandbox or policy" in result.error
+    assert "sandbox or execution-policy refusal" in result.error
+
+
+def test_ordinary_nonzero_implementation_failure_has_distinct_diagnostic(monkeypatch, tmp_path):
+    worktree = tmp_path / "repo" / ".devflow-worktrees" / "run"
+    worktree.mkdir(parents=True)
+    proposal = TaskProposal.model_validate(json.loads(_proposal_json()))
+    fake_run, _ = _fake_run_factory(
+        returncode=7, message="Implementation command failed.", stderr="ordinary failure",
+    )
+    _setup(monkeypatch, tmp_path, fake_run)
+    monkeypatch.setattr(codex_cli, "_validate_worktree_root", lambda _: True)
+
+    result = codex_cli.implement_approved_plan(
+        proposal, proposal_fingerprint(proposal), worktree,
+    )
+
+    assert result.status == "failed"
+    assert result.error == "Codex implementation exited with a nonzero status."
+
+
+def test_implementation_timeout_remains_distinct_from_policy_refusal(monkeypatch, tmp_path):
+    worktree = tmp_path / "repo" / ".devflow-worktrees" / "run"
+    worktree.mkdir(parents=True)
+    proposal = TaskProposal.model_validate(json.loads(_proposal_json()))
+
+    def timeout(command, **kwargs):
+        if command[-1] == "--help":
+            return subprocess.CompletedProcess(command, 0, stdout=_EXEC_HELP, stderr="")
+        raise subprocess.TimeoutExpired(
+            command, kwargs["timeout"], output=b"PowerShell command rejected by policy",
+        )
+
+    _setup(monkeypatch, tmp_path, timeout)
+    monkeypatch.setattr(codex_cli, "_validate_worktree_root", lambda _: True)
+
+    result = codex_cli.implement_approved_plan(
+        proposal, proposal_fingerprint(proposal), worktree,
+    )
+
+    assert result.status == "timeout"
+    assert result.timed_out is True
+    assert result.error == "Codex implementation exceeded the configured timeout."
 
 
 def test_unsupported_workspace_write_capability_fails_closed(monkeypatch, tmp_path):
@@ -258,6 +424,10 @@ def test_review_uses_review_specific_supported_argument_list(monkeypatch, tmp_pa
         args[args.index("--output-last-message") + 1], "-",
     ]
     assert "--sandbox" not in args
+    sent = captured["kwargs"]["input"]
+    assert isinstance(sent, bytes)
+    assert sent.decode("utf-8").encode("utf-8") == sent
+    assert "text" not in captured["kwargs"]
     assert captured["help_commands"] == [["C:/tools/codex.exe", "exec", "review", "--help"]]
 
 

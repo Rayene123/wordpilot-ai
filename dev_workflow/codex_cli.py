@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -31,12 +32,16 @@ _EXECUTION_FAILURE_PATTERNS = (
     re.compile(r"\brejected\s*\([^\n]{0,300}blocked by policy", re.IGNORECASE),
     re.compile(r"\b(?:rejected|blocked|denied)\b.{0,100}\bby\b.{0,40}\b(?:environment\s+|execution\s+|security\s+)?policy\b", re.IGNORECASE | re.DOTALL),
     re.compile(r"\bpolicy\b.{0,100}\b(?:rejected|blocked|denied)\b", re.IGNORECASE | re.DOTALL),
+    re.compile(r"\b(?:windows\.)?sandbox(?: implementation)?\b.{0,120}\b(?:unavailable|unsupported|prohibited|not permitted|not allowed|disallowed)\b", re.IGNORECASE | re.DOTALL),
+    re.compile(r"\b(?:managed|host)\s+policy\b.{0,120}\b(?:prohibits?|disallows?|rejects?)\b.{0,80}\b(?:sandbox|implementation)\b", re.IGNORECASE | re.DOTALL),
     re.compile(r"\bsandbox\b.{0,100}\b(?:denied|rejected|blocked|read[- ]only)\b", re.IGNORECASE | re.DOTALL),
     re.compile(r"\b(?:workspace|filesystem|file system)\b.{0,100}\b(?:mounted\s+)?read[- ]only\b", re.IGNORECASE | re.DOTALL),
     re.compile(r"\b(?:read[- ]only|readonly)\b.{0,100}\b(?:workspace|filesystem|file system)\b", re.IGNORECASE | re.DOTALL),
+    re.compile(r"\bread[- ]only\b.{0,100}\b(?:cannot|can't|unable to|not able to)\b.{0,100}\b(?:implement|write|create|modify|edit)\b", re.IGNORECASE | re.DOTALL),
     re.compile(r"\b(?:write|writing|create|modify|edit)\b.{0,100}\b(?:blocked|denied|not permitted|read[- ]only)\b", re.IGNORECASE | re.DOTALL),
     re.compile(r"\b(?:permission denied|operation not permitted)\b", re.IGNORECASE),
 )
+_WINDOWS_SANDBOX_IMPLEMENTATIONS = frozenset({"mxc", "elevated", "unelevated"})
 
 
 def resolve_codex_executable(executable: str = "codex") -> tuple[str | None, str | None]:
@@ -133,8 +138,31 @@ def _explicit_execution_failure(*outputs: str | None) -> str | None:
     """Detect CLI-reported policy failures even when the CLI exits with zero."""
     evidence = "\n".join(value for value in outputs if value)
     if any(pattern.search(evidence) for pattern in _EXECUTION_FAILURE_PATTERNS):
-        return "Codex command execution was blocked by the active sandbox or policy."
+        if sys.platform == "win32":
+            return (
+                "Codex reported a sandbox or execution-policy refusal. Check "
+                "DEVFLOW_WINDOWS_SANDBOX and confirm the host or managed policy "
+                "permits that implementation."
+            )
+        return (
+            "Codex reported a sandbox or execution-policy refusal. Check the "
+            "selected sandbox implementation and host or managed policy."
+        )
     return None
+
+
+def _windows_sandbox_config() -> tuple[list[str], str | None]:
+    """Return a host-selected Windows backend override, failing closed if absent."""
+    if sys.platform != "win32":
+        return [], None
+    implementation = os.environ.get("DEVFLOW_WINDOWS_SANDBOX")
+    if implementation not in _WINDOWS_SANDBOX_IMPLEMENTATIONS:
+        return [], (
+            "Windows implementation requires DEVFLOW_WINDOWS_SANDBOX to be set "
+            "exactly to one of: mxc, elevated, unelevated. Codex and managed "
+            "policy remain authoritative for whether the selected backend is available."
+        )
+    return ["--config", f"windows.sandbox={implementation}"], None
 
 
 def _bounded_text(value: str, limit: int) -> str:
@@ -236,8 +264,7 @@ def analyze_task(
             with stdout_path.open("wb") as stdout_stream, stderr_path.open("wb") as stderr_stream:
                 completed = subprocess.run(
                     command,
-                    input=prompt,
-                    text=True,
+                    input=prompt.encode("utf-8"),
                     cwd=str(repository),
                     stdout=stdout_stream,
                     stderr=stderr_stream,
@@ -315,6 +342,18 @@ def implement_approved_plan(
         raise ValueError("A valid worktree and positive timeout are required.")
     if fingerprint != proposal_fingerprint(proposal, revision=proposal_revision) or directory.parent.name != ".devflow-worktrees":
         raise ValueError("Implementation requires the exact approved proposal in a DevFlow worktree.")
+    started = time.monotonic()
+    windows_sandbox_args, sandbox_config_error = _windows_sandbox_config()
+    command = [
+        executable, "exec", "--ephemeral", "--ignore-user-config",
+        *windows_sandbox_args, "--sandbox", "workspace-write",
+        "--json", "--output-last-message", "<temporary-last-message.txt>", "-",
+    ]
+    if sandbox_config_error is not None:
+        return _result(
+            command, started=started, status="failed", exit_code=None,
+            error=sandbox_config_error,
+        )
     if not _validate_worktree_root(directory):
         raise ValueError("Implementation directory is not under the expected repository worktree root.")
     resolved, resolution_error = resolve_codex_executable(executable)
@@ -323,17 +362,22 @@ def implement_approved_plan(
     # is capability-checked below; never substitute auto-approval or bypass flags.
     command = [
         resolved or executable, "exec", "--ephemeral", "--ignore-user-config",
+        *windows_sandbox_args,
         "--sandbox", "workspace-write",
         "--json", "--output-last-message", "<temporary-last-message.txt>", "-",
     ]
-    started = time.monotonic()
     if resolved is None:
         return _result(command, started=started, status="failed", exit_code=None,
                        error=resolution_error)
+    required_options = (
+        "--ephemeral", "--ignore-user-config", "--sandbox", "--json",
+        "--output-last-message",
+    )
+    if windows_sandbox_args:
+        required_options += ("--config",)
     if not _supports_cli(
         resolved, ("exec", "--help"),
-        required_options=("--ephemeral", "--ignore-user-config", "--sandbox", "--json",
-                          "--output-last-message"),
+        required_options=required_options,
         required_values=("workspace-write",),
     ):
         return _result(
@@ -354,11 +398,12 @@ def implement_approved_plan(
             temp_dir = Path(temp_name)
             message_path = temp_dir / "last-message.txt"
             command = [resolved, "exec", "--ephemeral", "--ignore-user-config",
+                       *windows_sandbox_args,
                        "--sandbox", "workspace-write",
                        "--json", "--output-last-message", str(message_path), "-"]
             stdout_path, stderr_path = temp_dir / "stdout.log", temp_dir / "stderr.log"
             with stdout_path.open("wb") as out, stderr_path.open("wb") as err:
-                completed = subprocess.run(command, input=prompt, text=True, cwd=str(directory),
+                completed = subprocess.run(command, input=prompt.encode("utf-8"), cwd=str(directory),
                                            stdout=out, stderr=err, timeout=timeout_seconds,
                                            check=False, shell=False)
             stdout = _read_bounded(stdout_path, MAX_CAPTURE_BYTES)
@@ -433,7 +478,7 @@ def review_worktree(
             stdout_path, stderr_path = temp_dir / "stdout.log", temp_dir / "stderr.log"
             with stdout_path.open("wb") as out, stderr_path.open("wb") as err:
                 completed = subprocess.run(
-                    command, input=prompt, text=True, cwd=str(directory), stdout=out,
+                    command, input=prompt.encode("utf-8"), cwd=str(directory), stdout=out,
                     stderr=err, timeout=timeout_seconds, check=False, shell=False,
                 )
             last = _read_bounded(message_path, MAX_LAST_MESSAGE_BYTES) if message_path.is_file() else None

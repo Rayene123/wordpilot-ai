@@ -205,6 +205,7 @@ def test_invalid_diff_is_reported_without_verification(tmp_path):
     )
     proposal_result, _ = _pause(graph, state, config)
     done = graph.invoke(Command(resume=_decision(proposal_result)), config)
+    assert done["execution_result"]["status"] == "succeeded"
     assert done["final_status"] == "failed"
     assert done["final_report"]["diff_validation_status"] == "invalid"
     assert calls == []

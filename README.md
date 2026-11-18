@@ -107,6 +107,14 @@ By default DevFlow discovers `codex` on `PATH`. To select a specific installatio
 $env:CODEX_CLI_PATH = 'C:\path\to\codex.exe'
 ```
 
+On native Windows, set `DEVFLOW_WINDOWS_SANDBOX` in the same shell before starting DevFlow. It is required for implementation and the optional write-capability preflight. Accepted values are `mxc`, `elevated`, and `unelevated`:
+
+```powershell
+$env:DEVFLOW_WINDOWS_SANDBOX = 'elevated'
+```
+
+Choose a backend that is available and permitted by the host: use `mxc` when supported by the device and policy, or `elevated` when its administrator-provisioned setup is available. Use `unelevated` only when it is permitted and appropriate for the environment; it provides weaker network isolation than `elevated`. DevFlow passes this value as an explicit Codex Windows sandbox configuration while keeping implementation in `workspace-write`. Missing or invalid values stop implementation before Codex is launched. Selecting a value does not guarantee that the host supports it; Codex setup and managed policy remain authoritative, and DevFlow does not fall back to another implementation. Read-only analysis and non-Windows runs do not require this setting.
+
 The diagnostic's `workspace_write_capability` result only checks CLI help. It does not prove that Codex can successfully write in the current host environment. For the optional manual marker-write preflight and its evidence details, see the single canonical section below. The workflow does not run preflight automatically before implementation.
 
 Run all repository tests with `python -m pytest -q`. Start the document-editing backend with `python -m uvicorn backend.api:app --host 127.0.0.1 --port 8000`; this does not require Codex CLI. DevFlow itself is currently invoked through the Python API shown below and has no standalone `run` command.
