@@ -31,9 +31,21 @@ _proposals: dict[str, dict[str, Any]] = {}
 _downloads: dict[str, Path] = {}
 
 app = FastAPI(title="WordPilot API", version="1.0.0")
+_default_cors_origins = (
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+)
+_configured_cors_origins = os.getenv("WORDPILOT_CORS_ORIGINS")
+_cors_origins = (
+    [origin.strip() for origin in _configured_cors_origins.split(",") if origin.strip()]
+    if _configured_cors_origins is not None
+    else list(_default_cors_origins)
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=_cors_origins,
     allow_credentials=False,
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],

@@ -92,10 +92,18 @@ def test_missing_executable_fails_and_does_not_continue(tmp_path, monkeypatch):
 
 def test_invalid_and_escaping_working_directories_fail_safely(tmp_path, monkeypatch):
     _setup(tmp_path, monkeypatch)
+    process_calls = []
+
+    def unexpected_process(*args, **kwargs):
+        process_calls.append((args, kwargs))
+        raise AssertionError("Invalid working directories must be rejected before process launch.")
+
+    monkeypatch.setattr(verification.subprocess, "run", unexpected_process)
     for cwd in ("missing", "../outside"):
         result = _run(tmp_path, monkeypatch, [_check(_python("pass"), cwd=cwd)])[0]
         assert result.status == "failed"
         assert result.stdout == result.stderr == ""
+    assert process_calls == []
 
 
 def test_stdout_and_stderr_are_bounded_with_truncation_flags(tmp_path, monkeypatch):
@@ -125,6 +133,61 @@ def test_command_uses_argument_array_shell_false_and_timeout(tmp_path, monkeypat
     assert seen[0][0] == list(argv)
     assert seen[0][1]["shell"] is False
     assert seen[0][1]["timeout"] == 2
+
+
+def test_windows_npm_cmd_uses_node_directly_and_keeps_logical_identity(tmp_path, monkeypatch):
+    root = _setup(tmp_path, monkeypatch)
+    node_dir = tmp_path / "nodejs"
+    npm_cmd = node_dir / "npm.cmd"
+    node = node_dir / "node.exe"
+    npm_cli = node_dir / "node_modules" / "npm" / "bin" / "npm-cli.js"
+    npm_cmd.parent.mkdir(parents=True)
+    node.write_bytes(b"node placeholder")
+    npm_cmd.write_text("@echo off\n", encoding="utf-8")
+    npm_cli.parent.mkdir(parents=True)
+    npm_cli.write_text("// npm placeholder\n", encoding="utf-8")
+    monkeypatch.setattr(verification, "_is_windows", lambda: True)
+    monkeypatch.setattr(verification.shutil, "which", lambda command: str(npm_cmd) if command == "npm" else None)
+    captured = {}
+
+    def successful_process(arguments, **kwargs):
+        captured["arguments"] = arguments
+        captured["kwargs"] = kwargs
+        kwargs["stdout"].write(b"typecheck passed\n")
+        return subprocess.CompletedProcess(arguments, 0)
+
+    monkeypatch.setattr(verification.subprocess, "run", successful_process)
+    check = VerificationCheck(
+        "frontend.typecheck", "Frontend typecheck", ("npm", "run", "typecheck"),
+        "frontend", 300,
+    )
+    result = _run(tmp_path, monkeypatch, [check])[0]
+
+    assert result.status == "passed"
+    assert result.command_identity == ["npm", "run", "typecheck"]
+    assert captured["arguments"] == [str(node.resolve()), str(npm_cli.resolve()), "run", "typecheck"]
+    assert captured["kwargs"]["shell"] is False
+    assert str(captured["kwargs"]["cwd"]) == str((root / "frontend").resolve())
+    assert captured["kwargs"]["timeout"] == 300
+    assert result.stdout == "typecheck passed"
+
+
+def test_windows_npm_resolution_failure_is_reported_clearly(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    monkeypatch.setattr(verification, "_is_windows", lambda: True)
+    monkeypatch.setattr(verification.shutil, "which", lambda command: None)
+    check = VerificationCheck(
+        "frontend.typecheck", "Frontend typecheck", ("npm", "run", "typecheck"),
+        "frontend", 300,
+    )
+
+    result = _run(tmp_path, monkeypatch, [check])[0]
+
+    assert result.status == "failed"
+    assert result.exit_code is None
+    assert result.command_identity == ["npm", "run", "typecheck"]
+    assert "Process launch failed" in result.stderr
+    assert "Could not resolve npm" in result.stderr
 
 
 def test_diff_change_invalidates_results(tmp_path, monkeypatch):
@@ -193,6 +256,7 @@ def test_non_timeout_process_error_fails(monkeypatch, tmp_path):
     result = _run(tmp_path, monkeypatch, [_check(("blocked-program",))])[0]
     assert result.status == "failed"
     assert result.exit_code is None
+    assert "Process launch failed" in result.stderr
 
 
 def test_symlinked_working_directories_are_contained_or_rejected(tmp_path):

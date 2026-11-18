@@ -257,11 +257,10 @@ class WorkflowDecision(BaseModel):
 
     @field_validator("feedback")
     @classmethod
-    def strip_feedback(cls, value: str | None) -> str | None:
+    def validate_feedback(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        cleaned = value.strip()
-        return cleaned or None
+        return value if value.strip() else None
 
     @model_validator(mode="after")
     def require_revision_feedback(self) -> "WorkflowDecision":

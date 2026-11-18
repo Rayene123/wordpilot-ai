@@ -56,6 +56,18 @@ npm run dev
 
 The frontend reads `NEXT_PUBLIC_WORDPILOT_API_URL` from `frontend/.env.local` (default `http://127.0.0.1:8000`). Start the FastAPI backend separately. The browser calls its existing endpoints directly; Groq credentials remain in the backend environment.
 
+## Deploy frontend and backend to Vercel
+
+Deploy these as **two Vercel projects connected to the same repository**:
+
+1. Create the backend project with the repository root (`.`) as its Root Directory. The root `pyproject.toml` selects `backend.api:app`; Vercel installs Python dependencies from the root `requirements.txt` and uses Python 3.12.
+2. Create the frontend project with `frontend` as its Root Directory. Vercel detects Next.js and uses the app's `package.json` scripts.
+3. In the backend project's Production and Preview environment settings, set `WORDPILOT_LLM_PROVIDER=groq`, `GROQ_API_KEY`, and optionally `GROQ_MODEL`. Ollama's default `localhost` URL is not available inside a hosted Vercel function.
+4. Set backend `WORDPILOT_CORS_ORIGINS` to the exact frontend origin(s), comma-separated. Include preview origins only if those previews should be allowed to call the API.
+5. Set the frontend project's `NEXT_PUBLIC_WORDPILOT_API_URL` to the backend's deployed origin (no trailing slash), then redeploy the frontend so the value is included in its build.
+
+The FastAPI project is configured for Vercel's Python runtime with a 60-second function duration. This prepares the code to build and route on Vercel; it does not make the current API's workflow state durable. Uploaded DOCX files, pending proposals, and download registrations currently use local files and process memory, both of which are ephemeral and may differ between serverless invocations. Therefore multi-step upload/plan/approve/download flows are not production-reliable on Vercel until those stores are moved to durable shared object storage and a shared database/cache. Use a persistent Python host for the backend if you need the full workflow before that migration. The frontend can be deployed independently now.
+
 ## DevFlow development orchestrator
 
 `dev_workflow/` is an optional, separate Python package for orchestrating software-development tasks with Codex CLI. It is not part of WordPilot's DOCX backend and does not use the Groq/Ollama document-editing providers. WordPilot's DOCX application does not require Codex. DevFlow requires the evaluator to install and authenticate Codex CLI independently; this repository does not install it, provide credentials, or inherit another developer's login.

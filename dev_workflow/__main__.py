@@ -32,25 +32,37 @@ def _ask(prompt: str) -> str:
     return input(prompt).strip()
 
 
-def _read_task_description(input_line: Callable[[str], str] | None = None) -> str | None:
-    """Collect complete task text until END, preserving blank and edge lines."""
+def _read_multiline_input(
+    label: str,
+    item_name: str,
+    input_line: Callable[[str], str] | None = None,
+    *,
+    required_label: str | None = None,
+) -> str | None:
+    """Collect complete text until END, preserving blank and edge lines."""
     reader = input_line or input
-    _say("Enter the full task description. Finish by entering END on its own line.")
+    _say(f"Enter the {label}. Finish by entering END on its own line.")
     lines: list[str] = []
     while True:
         try:
-            line = reader("Task> " if not lines else "")
+            line = reader(f"{item_name.title()}> " if not lines else "")
         except EOFError:
-            _say("Input ended before END; the incomplete task was discarded.")
+            _say(f"Input ended before END; the incomplete {item_name} was discarded.")
             return None
         if line == "END":
             break
         lines.append(line)
-    task = "\n".join(lines)
-    if not task.strip():
-        _say("A task description is required.")
+    value = "\n".join(lines)
+    if not value.strip():
+        _say(f"A {required_label or item_name} is required.")
         return None
-    return task
+    return value
+
+
+def _read_task_description(input_line: Callable[[str], str] | None = None) -> str | None:
+    return _read_multiline_input(
+        "full task description", "task", input_line, required_label="task description",
+    )
 
 
 def _graph(saver: Any):
@@ -59,19 +71,36 @@ def _graph(saver: Any):
 
 def _runs(graph: Any) -> list[tuple[str, dict[str, Any], tuple[str, ...]]]:
     found: dict[str, tuple[str, dict[str, Any], tuple[str, ...]]] = {}
+
     try:
-        for checkpoint in graph.checkpointer.list(None):
+        # Fully consume the SQLite cursor before loading individual states.
+        checkpoints = list(graph.checkpointer.list(None))
+
+        for checkpoint in checkpoints:
             configurable = checkpoint.config.get("configurable", {})
             run_id = configurable.get("thread_id")
+
             if not isinstance(run_id, str) or run_id in found:
                 continue
+
             snapshot = graph.get_state(workflow_config(run_id))
+
             if snapshot.values:
-                found[run_id] = (run_id, dict(snapshot.values), tuple(snapshot.next))
+                found[run_id] = (
+                    run_id,
+                    dict(snapshot.values),
+                    tuple(snapshot.next),
+                )
+
     except Exception as exc:
         raise RuntimeError("Could not read workflow checkpoints.") from exc
-    return sorted(found.values(), key=lambda item: str(item[1].get("task_description", "")).casefold())
 
+    return sorted(
+        found.values(),
+        key=lambda item: str(
+            item[1].get("task_description", "")
+        ).casefold(),
+    )
 
 def check_environment() -> bool:
     global LIVE_PREFLIGHT_PASSED
@@ -141,10 +170,12 @@ def _review(graph: Any, state: dict[str, Any]) -> None:
     if action is None:
         _say("No decision recorded. The approval remains pending.")
         return
-    feedback = _ask("What should change? ") if action == "request_changes" else None
-    if action == "request_changes" and not feedback:
-        _say("Please provide change feedback. No decision recorded.")
-        return
+    feedback = None
+    if action == "request_changes":
+        feedback = _read_multiline_input("proposal-change feedback", "feedback")
+        if feedback is None:
+            _say("No change request recorded; the proposal remains pending.")
+            return
     decision = new_workflow_decision(proposal, action=action, feedback=feedback,
                                      proposal_revision=state.get("revision_count", 0))
     if action == "approve" and not LIVE_PREFLIGHT_PASSED:

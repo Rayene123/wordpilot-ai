@@ -66,6 +66,8 @@ def _fake_run_factory(*, returncode=0, message=None, stdout="event", stderr=""):
 
 
 def _setup(monkeypatch, tmp_path, fake_run):
+    (tmp_path / "backend").mkdir(exist_ok=True)
+    (tmp_path / "backend" / "api.py").write_text("# existing fixture\n", encoding="utf-8")
     monkeypatch.delenv("CODEX_CLI_PATH", raising=False)
     monkeypatch.setenv("DEVFLOW_WINDOWS_SANDBOX", "elevated")
     monkeypatch.setattr(codex_cli.shutil, "which", lambda _: "C:/tools/codex.exe")
@@ -139,6 +141,10 @@ def test_success_uses_read_only_cli_stdin_and_explicit_working_directory(monkeyp
     assert isinstance(kwargs["input"], bytes)
     assert "Add a response field" in kwargs["input"].decode("utf-8")
     assert "text" not in kwargs
+    prompt = kwargs["input"].decode("utf-8").casefold()
+    assert "pathlib" in prompt and "os.walk" in prompt
+    assert "rg" not in prompt
+    assert "read-only" in prompt
 
 
 def test_analysis_prompt_is_sent_as_exact_utf8_bytes_for_unicode_text(monkeypatch, tmp_path):
@@ -650,14 +656,65 @@ def test_nonzero_exit_has_failure_status(monkeypatch, tmp_path):
     assert "nonzero" in result.error
 
 
-@pytest.mark.parametrize("message", ["not json", '{"task_description":"partial"}'])
-def test_invalid_or_schema_incomplete_result_fails(monkeypatch, tmp_path, message):
-    fake_run, _ = _fake_run_factory(message=message)
+def test_invalid_json_is_distinguished(monkeypatch, tmp_path):
+    fake_run, _ = _fake_run_factory(message="not json")
     _setup(monkeypatch, tmp_path, fake_run)
     result, proposal = codex_cli.analyze_task("Task", tmp_path)
     assert result.status == "failed"
     assert proposal is None
-    assert "invalid structured" in result.error
+    assert "invalid JSON" in result.error
+
+
+def test_missing_required_fields_has_bounded_schema_diagnostic(monkeypatch, tmp_path):
+    fake_run, _ = _fake_run_factory(message='{"task_description":"partial"}')
+    _setup(monkeypatch, tmp_path, fake_run)
+    result, proposal = codex_cli.analyze_task("Task", tmp_path)
+    assert result.status == "failed"
+    assert proposal is None
+    assert "schema validation failed" in result.error
+    assert "task_summary" in result.error
+
+
+def test_expected_file_must_exist_for_modify_action(monkeypatch, tmp_path):
+    proposal = json.loads(_proposal_json())
+    proposal["expected_files"][0]["path"] = "backend/missing.py"
+    proposal["file_scope"]["included_files"] = ["backend/missing.py"]
+    fake_run, _ = _fake_run_factory(message=json.dumps(proposal))
+    _setup(monkeypatch, tmp_path, fake_run)
+
+    result, parsed = codex_cli.analyze_task("Task", tmp_path)
+
+    assert result.status == "failed"
+    assert parsed is None
+    assert "does not exist" in result.error
+
+
+def test_expected_new_file_is_allowed_when_parent_exists(monkeypatch, tmp_path):
+    proposal = json.loads(_proposal_json())
+    proposal["expected_files"][0].update(path="backend/new_file.py", action="create")
+    proposal["file_scope"]["included_files"] = ["backend/new_file.py"]
+    fake_run, _ = _fake_run_factory(message=json.dumps(proposal))
+    _setup(monkeypatch, tmp_path, fake_run)
+
+    result, parsed = codex_cli.analyze_task("Task", tmp_path)
+
+    assert result.status == "succeeded"
+    assert parsed is not None
+    assert not (tmp_path / "backend" / "new_file.py").exists()
+
+
+def test_analysis_does_not_write_repository_files(monkeypatch, tmp_path):
+    fake_run, _ = _fake_run_factory(message=_proposal_json())
+    _setup(monkeypatch, tmp_path, fake_run)
+    before = {path.relative_to(tmp_path): path.read_bytes()
+              for path in tmp_path.rglob("*") if path.is_file()}
+
+    result, _ = codex_cli.analyze_task("Task", tmp_path)
+
+    after = {path.relative_to(tmp_path): path.read_bytes()
+             for path in tmp_path.rglob("*") if path.is_file()}
+    assert result.status == "succeeded"
+    assert after == before
 
 
 def test_missing_last_message_fails(monkeypatch, tmp_path):

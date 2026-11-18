@@ -138,6 +138,78 @@ def test_read_task_description_keeps_single_line_entry_working():
     assert cli._read_task_description(lambda _prompt: next(entered)) == "Add a small helper"
 
 
+def _proposal_for_feedback_test():
+    return {
+        "task_summary": "Create greeting module.",
+        "requirements": ["Create hello.py."],
+        "acceptance_criteria": ["hello.py exists."],
+        "implementation_steps": [{"order": 1, "description": "Create hello.py."}],
+        "expected_files": [{"path": "hello.py", "action": "create", "rationale": "Demo."}],
+        "file_scope": {"included_files": ["hello.py"], "excluded_files": []},
+        "technical_decisions": [{"decision": "Use Python.", "rationale": "Demo."}],
+        "testing_strategy": ["Inspect the file."],
+    }
+
+
+def test_review_passes_multiline_feedback_unchanged_to_proposal_revision(monkeypatch, capsys):
+    feedback = "  Narrow the implementation.\n\nKeep this detail.  \n"
+    entered = iter(["  Narrow the implementation.", "", "Keep this detail.  ", "", "END"])
+    captured = {}
+    monkeypatch.setattr(cli, "_ask", lambda _prompt: "3")
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(entered))
+    monkeypatch.setattr(cli, "_display_proposal", lambda state: cli.TaskProposal.model_validate(state["proposal"]))
+    monkeypatch.setattr(cli, "resume_pending_approval", lambda graph, run_id, decision: (
+        captured.update(run_id=run_id, decision=decision) or {}
+    ))
+    monkeypatch.setattr(cli, "_show_state", lambda _state: None)
+
+    cli._review(object(), {
+        "run_id": "feedback-run", "revision_count": 0,
+        "proposal": _proposal_for_feedback_test(),
+    })
+
+    assert captured["run_id"] == "feedback-run"
+    assert captured["decision"].action == "request_changes"
+    assert captured["decision"].feedback == feedback
+    assert "Finish by entering END on its own line" in capsys.readouterr().out
+
+
+def test_multiline_feedback_terminates_only_on_exact_end_line():
+    entered = iter(["Revise the summary.", "The word END appears here.", " END ", "END", "2"])
+
+    feedback = cli._read_multiline_input(
+        "proposal-change feedback", "feedback", lambda _prompt: next(entered),
+    )
+
+    assert feedback == "Revise the summary.\nThe word END appears here.\n END "
+    assert next(entered) == "2"
+
+
+def test_review_does_not_submit_empty_or_incomplete_feedback(monkeypatch, capsys):
+    resumed = []
+    monkeypatch.setattr(cli, "_ask", lambda _prompt: "3")
+    monkeypatch.setattr("builtins.input", lambda _prompt="": "END")
+    monkeypatch.setattr(cli, "_display_proposal", lambda state: cli.TaskProposal.model_validate(state["proposal"]))
+    monkeypatch.setattr(cli, "resume_pending_approval", lambda *args: resumed.append(args))
+    cli._review(object(), {
+        "run_id": "empty-feedback-run", "revision_count": 0,
+        "proposal": _proposal_for_feedback_test(),
+    })
+    assert resumed == []
+    assert "A feedback is required" in capsys.readouterr().out
+
+    entered = iter(["Incomplete feedback"])
+
+    def eof_after_one_line(_prompt):
+        try:
+            return next(entered)
+        except StopIteration as exc:
+            raise EOFError from exc
+
+    assert cli._read_multiline_input("proposal-change feedback", "feedback", eof_after_one_line) is None
+    assert "incomplete feedback was discarded" in capsys.readouterr().out
+
+
 def test_environment_check_reports_python_and_git(monkeypatch, capsys):
     monkeypatch.setattr(cli, "resolve_codex_executable", lambda: (None, "Codex CLI not found"))
     monkeypatch.setattr(cli.shutil, "which", lambda name: None)

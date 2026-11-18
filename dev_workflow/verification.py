@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import time
@@ -100,7 +101,10 @@ def _working_directory(worktree: Path, identity: str) -> Path:
     ) and identity != ".":
         raise ValueError("Check working directory must be a safe worktree-relative path.")
     candidate = worktree if identity == "." else worktree.joinpath(*portable.split("/"))
-    resolved = candidate.resolve(strict=True)
+    try:
+        resolved = candidate.resolve(strict=True)
+    except FileNotFoundError as exc:
+        raise ValueError("Check working directory does not exist inside the worktree.") from exc
     if not resolved.is_dir() or (resolved != worktree and worktree not in resolved.parents):
         raise ValueError("Check working directory is not a directory inside the worktree.")
     return resolved
@@ -153,6 +157,36 @@ def _result(check: VerificationCheck, status: str, *, exit_code: int | None = No
     )
 
 
+def _is_windows() -> bool:
+    return os.name == "nt"
+
+
+def _process_arguments(check: VerificationCheck) -> list[str]:
+    """Resolve the fixed npm check to a directly launchable Windows process."""
+    arguments = list(check.arguments)
+    if not _is_windows() or check.arguments != ("npm", "run", "typecheck"):
+        return arguments
+
+    npm = shutil.which("npm")
+    if not npm:
+        raise FileNotFoundError("Could not resolve npm for the frontend typecheck.")
+    npm_path = Path(npm).resolve()
+    if npm_path.suffix.lower() == ".cmd":
+        npm_cli = npm_path.parent / "node_modules" / "npm" / "bin" / "npm-cli.js"
+        node_path = npm_path.parent / "node.exe"
+        if not node_path.is_file():
+            node = shutil.which("node")
+            node_path = Path(node).resolve() if node else node_path
+        if not node_path.is_file() or not npm_cli.is_file():
+            raise FileNotFoundError(
+                "Could not resolve node.exe and npm-cli.js for the Windows npm launcher."
+            )
+        return [str(node_path), str(npm_cli), *arguments[1:]]
+    if npm_path.suffix.lower() == ".exe":
+        return [str(npm_path), *arguments[1:]]
+    raise FileNotFoundError("The resolved Windows npm command is not directly launchable.")
+
+
 def run_verification(
     worktree_path: str | Path,
 ) -> list[VerificationCheckResult]:
@@ -191,7 +225,7 @@ def _run_configured_checks(
             with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
                 try:
                     completed = subprocess.run(
-                        list(check.arguments), cwd=cwd, env=env, stdout=stdout_file,
+                        _process_arguments(check), cwd=cwd, env=env, stdout=stdout_file,
                         stderr=stderr_file, timeout=check.timeout_seconds,
                         check=False, shell=False,
                     )
@@ -201,7 +235,11 @@ def _run_configured_checks(
                     status = "timed_out"
                 out_text, out_truncated = _read_evidence(stdout_file, env)
                 err_text, err_truncated = _read_evidence(stderr_file, env)
-        except (OSError, ValueError, subprocess.SubprocessError):
+        except OSError as exc:
+            status = "failed"
+            detail = exc.strerror or str(exc) or type(exc).__name__
+            err_text = _redact(f"Process launch failed: {detail}", env)
+        except (ValueError, subprocess.SubprocessError):
             status = "failed"
         duration = time.monotonic() - start
         results.append(_result(check, status, exit_code=code, duration=duration,
