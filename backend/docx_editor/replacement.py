@@ -12,6 +12,8 @@ from docx.text.paragraph import Paragraph
 from docx.oxml.ns import qn
 from docx.oxml.text.run import CT_R
 
+from .package_preservation import save_preserving_package_parts
+
 
 @dataclass(frozen=True)
 class ReplacementResult:
@@ -135,7 +137,7 @@ def replace_text(
         )
     if count:
         try:
-            document.save(str(destination))
+            save_preserving_package_parts(document, source, destination)
         except Exception as exc:
             raise OSError(f"Could not save DOCX document {destination}: {exc}") from exc
     else:

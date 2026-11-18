@@ -13,6 +13,8 @@ from docx.oxml.ns import qn
 from docx.table import Table, _Cell
 from docx.text.paragraph import Paragraph
 
+from .package_preservation import save_preserving_package_parts
+
 
 @dataclass(frozen=True)
 class OperationResult:
@@ -60,10 +62,10 @@ def _load(path: str | Path) -> tuple[DocumentObject | None, Path, str | None]:
         return None, source, f"Could not open DOCX document {source}: {exc}"
 
 
-def _save(document: DocumentObject, destination: Path, operation: str, count: int) -> OperationResult:
+def _save(document: DocumentObject, source: Path, destination: Path, operation: str, count: int) -> OperationResult:
     """Save an edited document and describe success or the save failure."""
     try:
-        document.save(str(destination))
+        save_preserving_package_parts(document, source, destination)
     except Exception as exc:
         return OperationResult(operation, False, 0, error=f"Could not save DOCX document {destination}: {exc}")
     return OperationResult(operation, True, count, output_path=str(destination))
@@ -116,7 +118,7 @@ def insert_paragraph(
     else:
         target._p.addnext(element)
     destination = Path(output_path) if output_path is not None else source
-    return _save(document, destination, operation, 1)
+    return _save(document, source, destination, operation, 1)
 
 
 def _location_paragraph(document: DocumentObject, location: tuple[int, ...]) -> Paragraph | None:
@@ -195,4 +197,4 @@ def remove_paragraph(
         return OperationResult(operation, False, 0, error=unsafe_reason)
     target._p.getparent().remove(target._p)
     destination = Path(output_path) if output_path is not None else source
-    return _save(document, destination, operation, 1)
+    return _save(document, source, destination, operation, 1)
