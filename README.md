@@ -22,15 +22,22 @@ Install Python dependencies from the repository root:
 python -m pip install -r requirements.txt
 ```
 
-The root `.env.example` selects Groq with example model `openai/gpt-oss-120b`. Copy it to the untracked root `.env` if needed, add your Groq API key there, then start the API:
+### Groq — recommended demonstrated configuration
+
+The demonstrated WordPilot execution used Groq with model `openai/gpt-oss-120b`. Groq avoids hosting a language model on the developer machine, but requires internet connectivity and a Groq API key. The instruction and inspected document text are sent to the selected provider. Availability, pricing, applicable data-processing terms, retention policies, and organizational security requirements should be assessed before use. The application does not establish a provider's data-handling terms.
+
+Copy the root `.env.example` to the untracked root `.env`, replace the placeholder `GROQ_API_KEY`, and keep `WORDPILOT_LLM_PROVIDER=groq`:
 
 ```powershell
 python -m uvicorn backend.api:app --host 127.0.0.1 --port 8000
 ```
 
-For patient or medical documents, local inference is preferable when the machine can host a sufficiently capable model and keep inference/logging local. This project uses Groq because the available computer cannot host a model with sufficient capability. WordPilot sends the instruction and inspected document text to the selected provider. Use a cloud API with patient data only after confirming its applicable terms and settings prevent training on submitted data and meet your organization's requirements; the application itself does not establish that assurance.
+### Ollama — optional local deployment
 
-The code fallback when no provider is configured is local Ollama (`qwen2.5:7b` at `http://localhost:11434`). To use it instead, pull `qwen2.5:7b`, set `WORDPILOT_LLM_PROVIDER=ollama` in the shell, then start the API. Provider variables and defaults are listed in the architecture document.
+WordPilot retains support for Ollama. For patient or medical documents, local inference is preferable when the machine can host a sufficiently capable model and keep inference/logging local.
+To select it, set `WORDPILOT_LLM_PROVIDER=ollama`, choose the model with `WORDPILOT_LLM_MODEL` (default `qwen2.5:7b`), and set `WORDPILOT_OLLAMA_BASE_URL` if the service is not at `http://localhost:11434`. Pull the selected model in Ollama before starting the API. Local inference can keep requests within organizational infrastructure when correctly deployed and configured, and avoids per-request third-party inference API charges; it still has hardware, electricity, hosting, and operational costs. It requires adequate CPU, RAM and/or GPU resources. Local model performance and deployment compatibility were not fully validated in this development environment because of hardware limitations.
+
+Provider selection is explicit. The code defaults to Ollama only if `WORDPILOT_LLM_PROVIDER` is unset; it does not automatically fall back between providers. The example configuration selects Groq, so a missing Groq key causes provider setup to fail rather than switching to Ollama. See the [provider configuration details](docs/WORDPILOT_ARCHITECTURE.md#provider-configuration-and-setup).
 
 In another terminal:
 

@@ -111,20 +111,22 @@ The following table describes general feature boundaries; it does not downgrade 
 
 ## Provider configuration and setup
 
-The runtime configuration in [`backend/agent/provider.py`](../backend/agent/provider.py) is authoritative:
+The runtime configuration in [`backend/agent/provider.py`](../backend/agent/provider.py) is authoritative. Groq is the recommended demonstrated configuration; Ollama remains an optional local integration. Provider selection is explicit and there is no automatic fallback:
 
 | Setting | Runtime behavior when selected/omitted |
 |---|---|
-| `WORDPILOT_LLM_PROVIDER` | Defaults to `ollama`; accepted values are `ollama` and `groq`; unknown values fail. |
+| `WORDPILOT_LLM_PROVIDER` | Defaults to `ollama` only when unset; accepted values are `ollama` and `groq`; unknown values fail. No automatic provider fallback. |
 | Ollama model | `WORDPILOT_LLM_MODEL`, default `qwen2.5:7b`. |
 | Ollama endpoint | `WORDPILOT_OLLAMA_BASE_URL`, default `http://localhost:11434`. |
 | Groq model | `GROQ_MODEL`, default `openai/gpt-oss-120b`. |
 | Groq credential | `GROQ_API_KEY` is required when Groq is selected. |
 | Request timeout | `WORDPILOT_LLM_TIMEOUT_SECONDS`, default `30`; non-positive values fail. |
 
-The committed root [`.env.example`](../.env.example) explicitly sets `WORDPILOT_LLM_PROVIDER=groq` and has an empty `GROQ_API_KEY`; therefore it does not represent the runtime fallback and will select Groq if copied unchanged. For a local Ollama setup, set `WORDPILOT_LLM_PROVIDER=ollama` in the environment (which takes precedence over `.env`) or change that local `.env` value. For Groq, set a valid backend-only `GROQ_API_KEY`. Provider tests use fakes; they do not prove that a live service, model, network, or credential works.
+The root [`.env.example`](../.env.example) selects Groq and includes a placeholder `GROQ_API_KEY`; replace it with a valid backend-only key. This example selection is distinct from the code's Ollama default when the provider setting is absent. If Groq is selected without a key, provider setup fails; it does not switch to Ollama. To select Ollama, set `WORDPILOT_LLM_PROVIDER=ollama`; `WORDPILOT_LLM_MODEL` selects its model and defaults to `qwen2.5:7b`, while `WORDPILOT_OLLAMA_BASE_URL` defaults to `http://localhost:11434`.
 
-The project uses Groq because the available computer cannot host a sufficiently capable local model. Local inference remains preferable for patient or medical data when the hardware can run the required model and the inference/logging path is local, since the planner sends the instruction and inspected document text to the selected provider. With the current hardware constraint, submit such data to a cloud API only after the provider's applicable contract and settings expressly rule out using submitted data for training and satisfy the organization's data-handling requirements. The WordPilot code and this repository audit do not establish Groq's current data terms. The supplied website execution confirms the configured sample workflow; it does not establish performance on other models, documents, or service conditions.
+**Demonstrated configuration: Groq.** Groq was selected for the demonstrated execution environment because the available development hardware was insufficient to host local language models with satisfactory performance. Groq requires an API key and internet connectivity; requests are processed by an external provider. Organizations should assess provider availability, pricing, applicable data-processing terms, retention policies, and security requirements for their use case. This repository does not establish Groq's current terms.
+
+**Alternative configuration: Ollama.** The application retains its Ollama integration for organizations with sufficient local computational resources that prefer local inference. When correctly deployed and configured, local inference can keep requests within organizational infrastructure and reduce dependence on external inference APIs. It requires suitable CPU, RAM and/or GPU resources and incurs hardware, electricity, hosting, and operational costs. Local model performance and deployment compatibility were not fully validated in the development environment because of hardware limitations. Do not interpret provider unit tests, which use fakes, as live validation of either provider. The demonstrated website execution establishes the sample workflow using its configured provider, not equivalent validation of both providers.
 
 ## Compliance matrix for the supplied instruction
 
@@ -193,8 +195,8 @@ The project author opened and visually inspected `therapist_session_notes-verifi
 The README keeps the user-facing overview short and links here for technical evidence. The following qualifications govern evaluation claims:
 
 - “Completed and verified” means the verifier's supported structural checks passed; it does not mean Word rendering is equivalent or unsupported OOXML semantics are preserved.
-- `.env.example` selects Groq while the code fallback, when no provider is configured, is Ollama. The README explains the configured Groq setup and the local Ollama alternative.
-- Provider unit tests are mocked. Live Groq/Ollama calls, model availability, network behavior, and latency are not established by the test suite.
+- `.env.example` selects the demonstrated Groq configuration; the code defaults to Ollama only when `WORDPILOT_LLM_PROVIDER` is unset. Selection is explicit and no automatic fallback is implemented. README and provider setup above describe this distinction.
+- Provider unit tests are mocked. They do not establish live Groq/Ollama calls, model availability, network behavior, latency, or equivalent provider validation.
 - Regression tests use synthetic fixtures, while the supplied input/instruction/output are covered by the website execution and passing integrity result documented above.
 - Vercel configuration can build/route the services, but ephemeral local storage and in-memory registries do not support reliable multi-step workflows across serverless instances.
 - DevFlow documentation describes implemented workflow paths and tests; it must not be conflated with WordPilot's delivered DOCX runtime or represented as an independently reviewed/repairing workflow.
@@ -214,5 +216,5 @@ Relevant implementation files: `dev_workflow/graph.py`, `schemas.py`, `state.py`
 1. Add a repeatable CI integration test for the supplied workflow so future changes can guard the sample behavior.
 2. Add a rendered visual comparison in Word-compatible rendering software; keep structural/package checks distinct from visual validation.
 3. Define the supported OOXML feature boundary more precisely and test representative hyperlink, numbering, header/footer, tracked-change, field, and shape documents before claiming those structures are safe.
-4. Align `.env.example` with the intended local default or retain the README's explicit Ollama override; this audit leaves configuration unchanged.
+4. Validate Ollama performance and deployment compatibility on adequately provisioned hardware before making performance claims.
 5. Before describing hosted multi-step use as production-ready, move files and workflow registries to durable shared services. Keep DevFlow review/repair capabilities described as absent until they exist.
