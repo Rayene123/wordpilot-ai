@@ -1,0 +1,173 @@
+# WordPilot architecture and compliance evidence
+
+## Audit basis and result
+
+The behavioral requirement source in this repository is [`therapist_session_notes_instruction.txt`](../therapist_session_notes_instruction.txt), applied to [`therapist_session_notes.docx`](../therapist_session_notes.docx). It asks for one paragraph to be inserted after the paragraph containing a specified sentence, that sentence to be replaced, and all other content and formatting to be preserved. The document is a fictional software demonstration fixture; it is not a clinical template.
+
+### Repository map
+
+| Path | Role |
+|---|---|
+| `backend/api.py`, `backend/agent/`, `backend/docx_editor/` | Delivered product API, planning/approval logic, custom tools, and DOCX operations. |
+| `frontend/src/` | Next.js App Router UI and typed API client. |
+| `tests/` | Synthetic DOCX, API, planner, orchestration, graph, and DevFlow regression tests. |
+| `scripts/` | Provider integration scripts and API/DevFlow diagnostics. |
+| `dev_workflow/` | Optional, separate Codex-based development workflow. |
+| `docs/` | CTO demonstration guide and this architecture/compliance report. |
+| `therapist_session_notes.docx`, `therapist_session_notes_instruction.txt` | Supplied sample input and requested edit instructions. |
+| `uploads/`, `generated-documents/` | Local runtime data directories; their contents are not committed sample deliverables. |
+| Root/frontend manifests and deployment files | Python dependencies, Next.js package lock/configuration, Vercel settings, and environment examples. |
+
+The repository contains an implementation that supports the requested classes of edit and has broad synthetic regression coverage. The supplied task is **not demonstrated end to end**: the source contains the target sentence, but none of the inspected uploaded or generated DOCX files contains the requested replacement sentence or inserted paragraph. There is no identifiable edited output deliverable for this instruction. The sample output DOCX remains an outstanding submission requirement.
+
+Status vocabulary used below: **VERIFIED** means source plus focused tests establish the stated bounded behavior; **PARTIALLY VERIFIED** means evidence covers only part of the behavior or explicitly reports unverified structures; **IMPLEMENTED BUT UNTESTED** means the feature exists but lacks relevant tests; **NOT IMPLEMENTED** means no implementation is present; **NOT APPLICABLE** means the requirement does not fit this product or supplied task.
+
+## Runtime architecture
+
+**Caption — WordPilot runtime components and host-controlled document boundary.**
+
+<!-- DIAGRAM PLACEHOLDER: wordpilot-runtime -->
+
+The delivered product runtime is the FastAPI application in [`backend/api.py`](../backend/api.py), the planner and orchestration in [`backend/agent/`](../backend/agent/), the DOCX inspection/editor/integrity modules in [`backend/docx_editor/`](../backend/docx_editor/), and the Next.js client in [`frontend/src/`](../frontend/src/). The browser sends instructions and displays proposals/results; document parsing and edits stay on the backend. The API chooses upload and output paths, keeps internal paths out of public proposals, and exposes downloads only through registered IDs.
+
+The runtime sequence is:
+
+1. `POST /api/documents/upload` accepts `.docx` up to 15 MiB, checks ZIP package markers and CRC, opens it with `python-docx`, then stores it under a host-generated ID.
+2. `POST /api/documents/{id}/plan` inspects the source and passes an ordered, compact document context plus the instruction to the selected provider. The LLM returns a `PlanningResult`; local Pydantic validation and exact-target checks reject malformed, missing, or ambiguous operations. Planning makes no edits.
+3. The API retains the proposal and one-time token in process memory. The browser displays the exact proposed operations for a human decision.
+4. `POST /api/documents/{id}/approve` checks the registered token, unchanged proposal, and source fingerprint; validates operations again; then calls the deterministic executor. It creates a unique output under `generated-documents/`, never overwriting the source.
+5. The approved execution path runs integrity verification. A passing result can be downloaded through the registered download ID; partial or failed verification is surfaced as such.
+
+This is not a streaming API and it does not render an editable/live Word preview. Proposal and download state is process-local; uploaded and generated files are local. Multi-step requests require the same live process, and deployment to ephemeral/serverless storage is not reliable without durable shared storage and state.
+
+### LangGraph graph and routing
+
+**Caption — Deterministic LangGraph operation path from inspection through final status.**
+
+<!-- DIAGRAM PLACEHOLDER: document-edit-graph -->
+
+[`backend/agent/graph.py`](../backend/agent/graph.py) compiles `build_document_graph(output_directory)` with these nodes:
+
+| Node | Behavior |
+|---|---|
+| `inspect_document` | Calls the bound inspection tool and initializes serializable result fields. |
+| `validate_operations` | Validates the complete proposed operation list with a discriminated Pydantic union before any edit. |
+| `execute_operations` | Executes validated operations sequentially using the fixed tool map; stops on first failure and preserves any partial output. |
+| `finalize` | Builds a response from the resulting status, errors, and warnings. |
+
+Edges: `START → inspect_document`; inspection routes to `validate_operations` or `finalize`; validation routes to `execute_operations` or `finalize`; execution goes to `finalize → END`. The output directory is host-selected and must already exist. State in [`backend/agent/state.py`](../backend/agent/state.py) uses paths and JSON-friendly values rather than live DOCX objects.
+
+Important boundary: this compiled graph accepts operation dictionaries supplied by its caller. The LLM planner is a separate path, and the HTTP API joins planning/approval to the same deterministic `_execute_node` executor without invoking `build_document_graph`. Do not describe the API as one LLM-tool-calling LangGraph agent loop.
+
+## Custom document tools and operation schemas
+
+[`backend/agent/tools.py`](../backend/agent/tools.py) creates four fixed LangChain tools: `inspect_document`, `replace_text`, `insert_paragraph`, and `remove_paragraph`. The source and optional output paths are selected by host code; tool schemas do not expose paths, shell commands, arbitrary functions, or general-purpose code execution. The three edit tools delegate to the existing `backend/docx_editor` operations. Schemas in [`backend/operation_schemas.py`](../backend/operation_schemas.py) forbid extra fields and constrain operation type, required text, insertion position, and optional explicit locations.
+
+`OperationPlanner` proposes operations only. It has no document path and invokes no editing tools. The system instruction treats document text as untrusted, allows only replace/insert/remove operations, and returns clarification for absent or ambiguous targets. Formatting-only requests are unsupported. This is a structured planner plus deterministic tools, not model-directed arbitrary execution.
+
+## DOCX reading, editing, serialization, and verification
+
+**Caption — DOCX package parts and structural checks around an approved body edit.**
+
+<!-- DIAGRAM PLACEHOLDER: docx-integrity-boundary -->
+
+### Read and edit behavior
+
+[`inspection.py`](../backend/docx_editor/inspection.py) uses `python-docx` to inspect paragraphs and runs, body/table block order, nested tables and cell paragraphs, styles, alignment, direct run properties, and inline image count. Its planner projection preserves ordered paragraph/table/cell nesting. It does not inspect header/footer contents or every Word feature.
+
+[`replacement.py`](../backend/docx_editor/replacement.py) changes `w:t` text nodes within contiguous safe text-only run sequences. Run and paragraph XML remain in place. A replacement spanning runs is placed in the first matched run, inheriting its formatting. Drawings, fields, breaks, and other non-text run XML are boundaries. It searches body and nested table-cell paragraphs.
+
+[`paragraph_operations.py`](../backend/docx_editor/paragraph_operations.py) inserts before/after a uniquely matched exact paragraph (or explicit location), inheriting its style unless one is supplied. Removal is guarded: it rejects headings/titles, sole paragraphs in a location, and paragraphs with non-text XML. Operations can target body paragraphs or table-cell paragraphs through validated index tuples.
+
+[`package_preservation.py`](../backend/docx_editor/package_preservation.py) asks `python-docx` to serialize the edited document, then writes a replacement package containing that serialized `word/document.xml` and the original bytes for every other ZIP member. It requires the package component names to match and atomically replaces the destination. This is a preservation mechanism for the current operation model, not a guarantee that all arbitrary OOXML semantics survive a `python-docx` load/save cycle.
+
+### Integrity coverage and limits
+
+[`integrity.py`](../backend/docx_editor/integrity.py) simulates the approved operations against an in-memory structural snapshot and compares the output. It checks ordered body and nested table-cell text, paragraph/table order, paragraph style/alignment and direct properties, run properties (including other direct run XML), table dimensions and table/row/cell properties, section properties, inline image references and bytes, plus hashes of all decompressed package parts other than `word/document.xml`. It limits package scanning to 10,000 ZIP entries, 64 MiB per component, and 256 MiB total uncompressed.
+
+Passing checks are structural and package-level evidence, not visual rendering equivalence in Microsoft Word or another renderer. Inline image placement and cropping are not compared. Header/footer parts and relationships are byte-compared as package components, but their meaning/layout is not rendered or semantically interpreted. Hyperlinks, numbering/list semantics, tracked changes, fields, bookmarks, content controls, text boxes/shapes, footnotes/endnotes, comments, embeddings, charts, diagrams, and other extension behavior are not fully modeled; relevant detected unsupported features produce `partially_verified`, and package-part equality alone does not prove semantic equivalence. The implementation does not claim universal formatting preservation.
+
+### Feature handling summary
+
+| Feature | Implementation/evidence | Boundary and status |
+|---|---|---|
+| Paragraph/run text and direct formatting | In-place `w:t` edits; formatting signatures; synthetic preservation and negative tests | **PARTIALLY VERIFIED**: tested properties and fixtures only; not a visual render comparison. |
+| Tables and nested tables | Inspection, editing targets, block-order and table-property comparison | **VERIFIED** for tested synthetic dimensions, cells, and paragraph operations; complex Word table semantics remain bounded. |
+| Inline images | Inspector counts inline shapes; package copy preserves original media; verifier compares references and hashes | **PARTIALLY VERIFIED**: placement/cropping not compared; floating images/shapes are outside inspection. |
+| Hyperlinks | Relationships/non-document package bytes are compared | **PARTIALLY VERIFIED**: hyperlink target edits are unsupported and link semantics are not interpreted. |
+| Headers and footers | Their package parts/relationships are preserved byte-for-byte by the saver and checked by package hashes | **PARTIALLY VERIFIED**: contents/layout are not inspected or rendered. |
+| Numbering and lists | Unmodified package parts are copied and hashed | **PARTIALLY VERIFIED**: numbering references and visual/list semantics are not separately interpreted. |
+| Tracked changes, fields, controls, shapes, notes, embeddings | Some package/content features are detected as unverified; no comprehensive editor support | **PARTIALLY VERIFIED** when detected; do not claim safe edit support. |
+
+## Provider configuration and setup
+
+The runtime configuration in [`backend/agent/provider.py`](../backend/agent/provider.py) is authoritative:
+
+| Setting | Runtime behavior when selected/omitted |
+|---|---|
+| `WORDPILOT_LLM_PROVIDER` | Defaults to `ollama`; accepted values are `ollama` and `groq`; unknown values fail. |
+| Ollama model | `WORDPILOT_LLM_MODEL`, default `qwen2.5:7b`. |
+| Ollama endpoint | `WORDPILOT_OLLAMA_BASE_URL`, default `http://localhost:11434`. |
+| Groq model | `GROQ_MODEL`, default `openai/gpt-oss-120b`. |
+| Groq credential | `GROQ_API_KEY` is required when Groq is selected. |
+| Request timeout | `WORDPILOT_LLM_TIMEOUT_SECONDS`, default `30`; non-positive values fail. |
+
+The committed root [`.env.example`](../.env.example) explicitly sets `WORDPILOT_LLM_PROVIDER=groq` and has an empty `GROQ_API_KEY`; therefore it does not represent the runtime fallback and will select Groq if copied unchanged. For a local Ollama setup, set `WORDPILOT_LLM_PROVIDER=ollama` in the environment (which takes precedence over `.env`) or change that local `.env` value. For Groq, set a valid backend-only `GROQ_API_KEY`. Provider tests use fakes; they do not prove that a live service, model, network, or credential works.
+
+The project uses Groq because the available computer cannot host a sufficiently capable local model. Local inference remains preferable for patient or medical data when the hardware can run the required model and the inference/logging path is local, since the planner sends the instruction and inspected document text to the selected provider. With the current hardware constraint, submit such data to a cloud API only after the provider's applicable contract and settings expressly rule out using submitted data for training and satisfy the organization's data-handling requirements. The WordPilot code and this repository audit do not establish Groq's current data terms. The configured small local model is not evidenced as capable enough for this task; provider model accuracy has not been integration-tested against the supplied sample.
+
+## Compliance matrix for the supplied instruction
+
+| Requirement | Status | Evidence (source and exact tests) | Proves / does not prove / remaining risk |
+|---|---|---|---|
+| Turn the natural-language request into the requested insert and replace operations | **PARTIALLY VERIFIED** | `backend/agent/planner.py`, `backend/agent/orchestration.py`; `tests/test_agent_planner.py::test_planner_returns_valid_operations`, `tests/test_agent_orchestration.py::test_planning_returns_approval_proposal_without_output`, `tests/test_agent_orchestration.py::test_approval_executes_and_preserves_original` | Proves mocked planner cases, proposal generation, and approved deterministic execution on synthetic DOCX. It does not prove this real instruction produces the correct proposal with a live provider. |
+| Insert the new paragraph after the paragraph containing the target sentence | **PARTIALLY VERIFIED** | `backend/operation_schemas.py`, `backend/agent/planner.py`, `backend/docx_editor/paragraph_operations.py`; `tests/test_docx_editor.py::test_insert_after_preserves_original_paragraph`, `tests/test_docx_editor.py::test_insert_inside_table_cell_when_target_is_unique`, `tests/test_agent_planner.py::test_planner_returns_valid_operations` | XML inspection confirms the target sentence is the complete paragraph in the supplied source, matching the planner's exact-paragraph-anchor contract. Tests prove exact-anchor insertion on synthetic documents; the sample-specific proposal and final placement have not been exercised end to end. |
+| Replace the exact current sentence with the supplied replacement sentence | **PARTIALLY VERIFIED** | `backend/docx_editor/replacement.py`, `backend/agent/planner.py`; `tests/test_docx_editor.py::test_cross_run_preserves_formatting_and_surrounding_text`, `tests/test_docx_editor.py::test_replaces_multiple_occurrences_in_one_paragraph`, `tests/test_docx_integrity.py::test_approved_replacement_across_adjacent_runs_preserves_formatting` | Proves exact text replacement in safe runs including a synthetic cross-run case. Does not prove the real sample proposal selected the intended exact sentence or that its final DOCX is correct. |
+| Preserve all other content and formatting | **PARTIALLY VERIFIED** | `backend/docx_editor/package_preservation.py`, `backend/docx_editor/integrity.py`; `tests/test_docx_editor.py::test_package_parts_preserved_or_modified_as_expected`, `tests/test_docx_editor.py::test_image_and_structure_survive_replacement`, `tests/test_docx_integrity.py::test_unapproved_formatting_change_fails`, `tests/test_docx_integrity.py::test_unrelated_table_cell_change_fails`, `tests/test_docx_integrity.py::test_changed_unrelated_package_part_fails`, `tests/test_docx_integrity.py::test_image_layout_scope_is_reported_as_partial` | Proves preservation/detection for selected synthetic structures and recognized properties. Does not prove unchanged visual rendering, every OOXML feature, or this sample output. |
+| Provide the edited sample DOCX deliverable | **NOT IMPLEMENTED** | Supplied source/instruction exist; no corresponding output under the supplied sample name. Runtime artifacts in `generated-documents/` are not identified as this sample's output and none contains the requested replacement or insertion text. | The required result cannot be reviewed. Existing ignored upload/output files are not substitutes for a named, reproducible deliverable. |
+
+## Test and fixture evidence map
+
+The tests below are source evidence only; this documentation audit did not execute them. No test fixture creates the supplied therapist-session sample: [`tests/conftest.py`](../tests/conftest.py) creates a synthetic document with a title paragraph, formatted text runs, a table, and an optional one-pixel inline image.
+
+| Area | Test files and representative exact tests |
+|---|---|
+| Tool/schema boundary | [`tests/test_agent_foundation.py`](../tests/test_agent_foundation.py): `test_tools_are_fixed_and_do_not_expose_paths`, `test_tool_argument_validation_rejects_empty_target`, `test_tool_adapters_call_existing_document_operations`, `test_tool_rejects_unrecognized_arguments`, `test_agent_state_is_json_serializable`. |
+| LangGraph execution | [`tests/test_agent_graph.py`](../tests/test_agent_graph.py): `test_successful_inspection_and_one_replacement`, `test_multiple_operations_execute_sequentially`, `test_invalid_operation_list_prevents_all_edits`, `test_middle_failure_returns_partial_output_and_stops`, `test_graph_state_is_json_serializable`. |
+| Planning and approval | [`tests/test_agent_planner.py`](../tests/test_agent_planner.py): `test_planner_returns_valid_operations`, `test_repeated_target_is_converted_to_host_clarification`, `test_invalid_structured_or_malformed_response_is_rejected`, `test_provider_selection_and_model_configuration`; [`tests/test_agent_orchestration.py`](../tests/test_agent_orchestration.py): `test_approval_executes_and_preserves_original`, `test_rejection_does_not_create_output`, `test_modified_security_relevant_proposal_fields_are_rejected`, `test_partial_verification_returns_completed_partially_verified`. |
+| Editing and package preservation | [`tests/test_docx_editor.py`](../tests/test_docx_editor.py): `test_cross_run_preserves_formatting_and_surrounding_text`, `test_table_cell_replacement_preserves_other_content`, `test_image_and_structure_survive_replacement`, `test_package_parts_preserved_or_modified_as_expected`, `test_insert_after_preserves_original_paragraph`, `test_remove_paragraph_and_preserve_neighbors_and_image`. |
+| Integrity verifier | [`tests/test_docx_integrity.py`](../tests/test_docx_integrity.py): `test_approved_replacement_across_adjacent_runs_preserves_formatting`, `test_unapproved_formatting_change_fails`, `test_inline_image_loss_fails`, `test_changed_image_relationship_is_detected`, `test_changed_unrelated_package_part_fails`, `test_harmless_zip_recompression_and_entry_order_pass`, `test_image_layout_scope_is_reported_as_partial`, `test_nested_table_cells_are_compared`, `test_unchanged_headers_and_footers_do_not_downgrade_body_edit`. |
+| HTTP boundary | [`tests/test_api.py`](../tests/test_api.py): `test_upload_valid_docx_and_reject_bad_or_large`, `test_plan_and_approve_validates_exact_proposal`, `test_approval_rejects_modified_server_upload_and_consumes_token`, `test_download_returns_only_registered_output`, `test_unknown_and_path_traversal_ids_are_404`. |
+
+## Samples and output evidence
+
+The tracked sample inputs are `therapist_session_notes.docx` (25,830 bytes; 49 body paragraphs, 6 top-level tables, no media parts) and `therapist_session_notes_instruction.txt`. ZIP/XML inspection found the target sentence in the source. The supplied instruction requires the new paragraph and replacement sentence; neither appears in the 15 inspected files in `generated-documents/`, and those outputs have no manifest associating them with this sample. The `uploads/` files are runtime data, not named test fixtures or submission samples. A compliant sample deliverable is therefore missing. No output file should be inferred from the current generated directory.
+
+## Unsupported or unverified README claims
+
+The README keeps the user-facing overview short and links here for technical evidence. The following qualifications govern evaluation claims:
+
+- “Completed and verified” means the verifier's supported structural checks passed; it does not mean Word rendering is equivalent or unsupported OOXML semantics are preserved.
+- The README quick start explicitly selects Ollama because `.env.example` selects Groq. The example config is not changed by this documentation scope.
+- Provider unit tests are mocked. Live Groq/Ollama calls, model availability, network behavior, and latency are not established by the test suite.
+- Tests do not exercise the supplied case-study instruction and sample as a paired source/output deliverable.
+- Vercel configuration can build/route the services, but ephemeral local storage and in-memory registries do not support reliable multi-step workflows across serverless instances.
+- DevFlow documentation describes implemented workflow paths and tests; it must not be conflated with WordPilot's delivered DOCX runtime or represented as an independently reviewed/repairing workflow.
+
+## DevFlow: separate development workflow
+
+**Caption — DevFlow's proposal approval and detached-worktree lifecycle, separate from WordPilot document editing.**
+
+<!-- DIAGRAM PLACEHOLDER: devflow-lifecycle -->
+
+[`dev_workflow/`](../dev_workflow/) is an optional Codex CLI development orchestrator, not a document-editing provider or dependency. Its LangGraph stages cover read-only analysis, strict proposal validation, fingerprint-bound human approval/revision, detached worktree implementation, host-side diff validation, fixed host-selected verification, and evidence-based reporting. It has no approval UI, dedicated independent review stage, or correction loop. Its verification/review limits are detailed in [`dev_workflow/VERIFICATION_LIFECYCLE.md`](../dev_workflow/VERIFICATION_LIFECYCLE.md); the CTO demo is in [`docs/DEVFLOW_CTO_DEMO.md`](DEVFLOW_CTO_DEMO.md).
+
+Relevant implementation files: `dev_workflow/graph.py`, `schemas.py`, `state.py`, `codex_cli.py`, `worktree.py`, `verification.py`, `checkpointing.py`, `reporting.py`, `preflight.py`, and `__main__.py`. Relevant tests include `tests/test_dev_workflow_graph.py::test_approval_is_required_before_isolated_implementation`, `tests/test_dev_workflow_checkpointing.py::test_graph_requires_an_explicit_checkpointer`, `tests/test_dev_workflow_checkpointing.py::test_sqlite_checkpoint_survives_closed_saver_and_resumes_same_interrupt`, `tests/test_dev_workflow_verification.py::test_checks_are_selected_from_host_changed_paths`, `tests/test_dev_workflow_reporting.py::test_success_requires_all_required_evidence_and_preserves_approval`, and `tests/test_dev_workflow_codex_cli.py::test_success_uses_read_only_cli_stdin_and_explicit_working_directory`. These are primarily adapter/fake-driven tests; they do not prove a live Codex account or host sandbox is available. The checkout had pre-existing uncommitted changes in `dev_workflow/preflight.py` and `tests/test_dev_workflow_preflight.py` during this audit; this documentation change does not assess or alter those edits.
+
+## Highest-priority gaps
+
+1. Produce and submit the missing edited sample DOCX, with a reproducible link to its source and instruction; verify both requested text operations and unrelated content/formatting against that specific output.
+2. Add sample-specific integration evidence, including a rendered visual comparison in Word-compatible rendering software; keep structural/package checks distinct from visual validation.
+3. Define the supported OOXML feature boundary more precisely and test representative hyperlink, numbering, header/footer, tracked-change, field, and shape documents before claiming those structures are safe.
+4. Align `.env.example` with the intended local default or retain the README's explicit Ollama override; this audit leaves configuration unchanged.
+5. Before describing hosted multi-step use as production-ready, move files and workflow registries to durable shared services. Keep DevFlow review/repair capabilities described as absent until they exist.
