@@ -1,0 +1,212 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1130" width="1600" height="1130" role="img" aria-labelledby="t d" font-family="'Segoe UI', Helvetica, Arial, sans-serif" xmlns:c2pa="http://c2pa.org/manifest">
+  <title id="t">DevFlow development lifecycle</title>
+  <desc id="d">DevFlow is a standalone, development-time Codex CLI workflow, separate from the WordPilot runtime. Stages: developer initiation, environment preflight, task definition, human approval, workspace preparation, Codex execution, host diff review, verification and reporting.</desc>
+  <defs>
+    <marker id="aBlue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1F5FA8"/></marker>
+    <marker id="aRed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#B4474A"/></marker>
+    <marker id="aGrey" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#7B8494"/></marker>
+    <style>
+      .box { fill: #FFFFFF; stroke: #3B7DD8; stroke-width: 1.8; }
+      .dia { fill: #E8F0FA; stroke: #1F5FA8; stroke-width: 1.8; }
+      .ttl { font-size: 16px; font-weight: 700; fill: #2B2F36; text-anchor: middle; }
+      .txt { font-size: 13px; fill: #4B5563; text-anchor: middle; }
+      .dtx { font-size: 13.5px; font-weight: 600; fill: #1F3A5F; text-anchor: middle; }
+      .lbl { font-size: 12.5px; font-weight: 600; fill: #1F5FA8; }
+      .lblr { font-size: 12.5px; font-weight: 600; fill: #B4474A; }
+      .cap { font-size: 12px; fill: #6B7280; }
+      .bdg { fill: #1F5FA8; }
+      .bdt { font-size: 12px; font-weight: 700; fill: #FFFFFF; text-anchor: middle; }
+      .flow { fill: none; stroke: #1F5FA8; stroke-width: 2; marker-end: url(#aBlue); }
+      .loop { fill: none; stroke: #1F5FA8; stroke-width: 2; stroke-dasharray: 7 5; marker-end: url(#aBlue); }
+      .fail { fill: none; stroke: #B4474A; stroke-width: 2; marker-end: url(#aRed); }
+      .chip { fill: #FBEEEE; stroke: #B4474A; stroke-width: 1.6; }
+      .gbox { fill: #FFFFFF; stroke: #9CA3AF; stroke-width: 1.6; }
+      .gflow { fill: none; stroke: #7B8494; stroke-width: 1.8; marker-end: url(#aGrey); }
+    </style>
+  </defs>
+
+  <rect width="1600" height="1130" fill="#FFFFFF"/>
+
+  <text x="800" y="44" text-anchor="middle" font-size="26" font-weight="700" fill="#2B2F36">DevFlow Development Lifecycle</text>
+  <text x="800" y="70" text-anchor="middle" font-size="14" fill="#6B7280">Stages and transitions as implemented in dev_workflow/ (graph.py, __main__.py, preflight.py, worktree.py, verification.py, reporting.py)</text>
+
+  <!-- DevFlow boundary -->
+  <rect x="24" y="96" width="1552" height="790" rx="14" fill="#F8FAFD" stroke="#1F5FA8" stroke-width="1.8" stroke-dasharray="9 6"/>
+  <path d="M24,110 a14,14 0 0 1 14,-14 H1562 a14,14 0 0 1 14,14 V138 H24 Z" fill="#2B2F36"/>
+  <text x="800" y="123" text-anchor="middle" font-size="17" font-weight="700" fill="#FFFFFF" letter-spacing="0.6">DEVELOPMENT-TIME TOOLING — SEPARATE FROM WORDPILOT RUNTIME</text>
+  <text x="800" y="166" text-anchor="middle" font-size="14" fill="#4B5563">Standalone Codex CLI workflow for software engineering tasks: planning, isolated execution, verification and reporting. It never handles WordPilot users' documents.</text>
+
+  <!-- Band 1 -->
+  <rect class="box" x="48" y="245" width="200" height="110" rx="10"/>
+  <text class="ttl" x="148" y="283">Developer Initiation</text>
+  <text class="txt" x="148" y="310">Start a task from the CLI</text>
+  <text class="txt" x="148" y="328">menu or resume a saved run</text>
+
+  <rect class="box" x="292" y="245" width="216" height="110" rx="10"/>
+  <text class="ttl" x="400" y="283">Environment Preflight</text>
+  <text class="txt" x="400" y="310">Python 3.12+, Git, Codex CLI,</text>
+  <text class="txt" x="400" y="328">auth, read-only + write probes</text>
+
+  <polygon class="dia" points="620,238 688,300 620,362 552,300"/>
+  <text class="dtx" x="620" y="297">Live preflight</text>
+  <text class="dtx" x="620" y="314">passed?</text>
+
+  <rect class="box" x="732" y="245" width="220" height="110" rx="10"/>
+  <text class="ttl" x="842" y="283">Task Definition</text>
+  <text class="txt" x="842" y="310">Codex (read-only) drafts scope,</text>
+  <text class="txt" x="842" y="328">files and acceptance criteria</text>
+
+  <polygon class="dia" points="1058,238 1120,300 1058,362 996,300"/>
+  <text class="dtx" x="1058" y="297">Proposal</text>
+  <text class="dtx" x="1058" y="314">valid?</text>
+
+  <polygon class="dia" points="1242,238 1320,300 1242,362 1164,300"/>
+  <text class="dtx" x="1242" y="296" font-size="15">Human</text>
+  <text class="dtx" x="1242" y="315" font-size="15">decision</text>
+
+  <rect class="chip" x="1350" y="275" width="202" height="50" rx="10"/>
+  <text x="1451" y="296" text-anchor="middle" font-size="13" font-weight="700" fill="#B4474A">Final report: rejected</text>
+  <text x="1451" y="313" text-anchor="middle" font-size="11.5" fill="#6B7280">human rejected the proposal</text>
+
+  <!-- Band 1 arrows -->
+  <path class="flow" d="M248,300 H290"/>
+  <path class="flow" d="M508,300 H550"/>
+  <path class="flow" d="M688,300 H730"/>
+  <text class="lbl" x="709" y="291" text-anchor="middle">yes</text>
+  <path class="flow" d="M952,300 H994"/>
+  <path class="flow" d="M1120,300 H1162"/>
+  <text class="lbl" x="1141" y="291" text-anchor="middle">yes</text>
+  <path class="fail" d="M1320,300 H1348"/>
+  <text class="lblr" x="1334" y="268" text-anchor="middle">reject</text>
+
+  <!-- loops -->
+  <path class="loop" d="M620,238 V205 H400 V243"/>
+  <text class="lbl" x="510" y="197" text-anchor="middle">no: fix environment, re-run check</text>
+  <path class="loop" d="M1242,238 V205 H842 V243"/>
+  <text class="lbl" x="1042" y="197" text-anchor="middle">request changes: re-analyse with feedback (bounded, default max 2)</text>
+
+  <!-- proposal invalid exit -->
+  <path class="fail" d="M1058,362 V403"/>
+  <text class="lblr" x="1068" y="388">no</text>
+  <rect class="chip" x="958" y="405" width="200" height="52" rx="10"/>
+  <text x="1058" y="426" text-anchor="middle" font-size="13" font-weight="700" fill="#B4474A">Final report: failed</text>
+  <text x="1058" y="443" text-anchor="middle" font-size="11.5" fill="#6B7280">analysis or validation failed</text>
+
+  <!-- approve -->
+  <path class="flow" d="M1242,362 V533"/>
+  <text class="lbl" x="1254" y="388">approve</text>
+  <text class="cap" x="1254" y="410">Pauses at a LangGraph interrupt;</text>
+  <text class="cap" x="1254" y="426">the decision is bound to the</text>
+  <text class="cap" x="1254" y="442">proposal fingerprint and revision.</text>
+
+  <!-- state strip -->
+  <rect x="48" y="395" width="832" height="64" rx="10" fill="#FFFFFF" stroke="#9CA3AF" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="64" y="416" font-size="13" font-weight="700" fill="#2B2F36">Workflow state</text>
+  <text class="cap" x="64" y="434">LangGraph checkpoints each run in SQLite (.devflow/checkpoints.sqlite3).</text>
+  <text class="cap" x="64" y="450">Approval pauses the run; it resumes from the saved run via the CLI menu.</text>
+
+  <!-- Band 2 (flows right to left) -->
+  <rect class="box" x="1132" y="535" width="220" height="110" rx="10"/>
+  <text class="ttl" x="1242" y="573">Workspace Preparation</text>
+  <text class="txt" x="1242" y="600">Detached Git worktree under</text>
+  <text class="txt" x="1242" y="618">.devflow-worktrees/&lt;run_id&gt;</text>
+
+  <rect class="box" x="878" y="535" width="220" height="110" rx="10"/>
+  <text class="ttl" x="988" y="573">Codex Execution</text>
+  <text class="txt" x="988" y="600">Implements the approved proposal</text>
+  <text class="txt" x="988" y="618">in a workspace-write sandbox</text>
+
+  <text class="cap" x="764" y="516" text-anchor="middle" font-weight="700">Host-side diff review</text>
+  <polygon class="dia" points="764,528 834,590 764,652 694,590"/>
+  <text class="dtx" x="764" y="587">Run OK and</text>
+  <text class="dtx" x="764" y="604">diff in scope?</text>
+
+  <rect class="box" x="430" y="535" width="220" height="110" rx="10"/>
+  <text class="ttl" x="540" y="573">Verification</text>
+  <text class="txt" x="540" y="600">Fixed host checks chosen by</text>
+  <text class="txt" x="540" y="618">changed paths: pytest, typecheck</text>
+
+  <polygon class="dia" points="318,528 386,590 318,652 250,590"/>
+  <text class="dtx" x="318" y="587">All required</text>
+  <text class="dtx" x="318" y="604">checks passed?</text>
+
+  <path class="flow" d="M1132,590 H1100"/>
+  <path class="flow" d="M878,590 H836"/>
+  <path class="flow" d="M694,590 H652"/>
+  <text class="lbl" x="673" y="581" text-anchor="middle">yes</text>
+  <path class="flow" d="M430,590 H388"/>
+
+  <path class="fail" d="M764,652 V738"/>
+  <text class="lblr" x="774" y="700">no: failed</text>
+  <path class="flow" d="M318,652 V738"/>
+  <text class="lbl" x="328" y="700">yes: passed</text>
+  <path class="fail" d="M250,590 H150 V738"/>
+  <text class="lblr" x="200" y="581" text-anchor="middle">no: failed</text>
+
+  <!-- legend -->
+  <path class="flow" d="M1384,566 H1414"/>
+  <text class="cap" x="1422" y="570">main path</text>
+  <path class="loop" d="M1384,592 H1414"/>
+  <text class="cap" x="1422" y="596">loop</text>
+  <path class="fail" d="M1384,618 H1414"/>
+  <text class="cap" x="1422" y="622">exit to report</text>
+
+  <!-- Band 3: report -->
+  <rect x="48" y="740" width="1504" height="102" rx="10" fill="#E8F0FA" stroke="#1F5FA8" stroke-width="1.8"/>
+  <text x="72" y="772" font-size="16" font-weight="700" fill="#2B2F36">Completion and Reporting</text>
+  <text class="cap" x="72" y="796" font-size="13" fill="#4B5563">Evidence-based report built from checkpointed state: decisions, implementation, diff and check results.</text>
+  <text class="cap" x="72" y="817" font-size="13" fill="#4B5563">Every terminal path ends here. Success requires approval, a valid diff and all required checks passed.</text>
+  <rect x="1000" y="773" width="110" height="34" rx="17" fill="#1F5FA8"/>
+  <text x="1055" y="795" text-anchor="middle" font-size="13" font-weight="700" fill="#FFFFFF">passed</text>
+  <rect x="1120" y="773" width="110" height="34" rx="17" fill="#FBEEEE" stroke="#B4474A" stroke-width="1.5"/>
+  <text x="1175" y="795" text-anchor="middle" font-size="13" font-weight="700" fill="#B4474A">failed</text>
+  <rect x="1240" y="773" width="110" height="34" rx="17" fill="#FFFFFF" stroke="#6B7280" stroke-width="1.5"/>
+  <text x="1295" y="795" text-anchor="middle" font-size="13" font-weight="700" fill="#4B5563">rejected</text>
+  <rect x="1360" y="773" width="170" height="34" rx="17" fill="#FFFFFF" stroke="#6B7280" stroke-width="1.5"/>
+  <text x="1445" y="795" text-anchor="middle" font-size="13" font-weight="700" fill="#4B5563">awaiting approval</text>
+
+  <!-- badges -->
+  <circle class="bdg" cx="48" cy="245" r="12"/><text class="bdt" x="48" y="249.5">1</text>
+  <circle class="bdg" cx="292" cy="245" r="12"/><text class="bdt" x="292" y="249.5">2</text>
+  <circle class="bdg" cx="732" cy="245" r="12"/><text class="bdt" x="732" y="249.5">3</text>
+  <circle class="bdg" cx="1203" cy="269" r="12"/><text class="bdt" x="1203" y="273.5">4</text>
+  <circle class="bdg" cx="1132" cy="535" r="12"/><text class="bdt" x="1132" y="539.5">5</text>
+  <circle class="bdg" cx="878" cy="535" r="12"/><text class="bdt" x="878" y="539.5">6</text>
+  <circle class="bdg" cx="729" cy="559" r="12"/><text class="bdt" x="729" y="563.5">7</text>
+  <circle class="bdg" cx="430" cy="535" r="12"/><text class="bdt" x="430" y="539.5">8</text>
+  <circle class="bdg" cx="48" cy="740" r="12"/><text class="bdt" x="48" y="744.5">9</text>
+
+  <text x="800" y="868" text-anchor="middle" font-size="13" font-style="italic" fill="#6B7280">Not implemented as workflow stages: independent code-review stage, automated review-and-correction loop, graphical approval UI. The only retry loop is bounded proposal revision.</text>
+
+  <!-- Separation marker -->
+  <rect x="440" y="897" width="720" height="30" rx="15" fill="#FFFFFF" stroke="#2B2F36" stroke-width="1.6"/>
+  <circle cx="470" cy="912" r="9" fill="none" stroke="#B4474A" stroke-width="1.8"/>
+  <path d="M465,907 L475,917 M475,907 L465,917" stroke="#B4474A" stroke-width="1.8" stroke-linecap="round"/>
+  <text x="810" y="917" text-anchor="middle" font-size="13.5" font-weight="700" fill="#2B2F36">No dependency: WordPilot does not import, call or deploy DevFlow</text>
+
+  <!-- WordPilot runtime panel -->
+  <rect x="24" y="940" width="1552" height="170" rx="14" fill="#F3F4F6" stroke="#9CA3AF" stroke-width="1.6" stroke-dasharray="9 6"/>
+  <text x="48" y="972" font-size="15" font-weight="700" fill="#4B5563" letter-spacing="0.4">WORDPILOT RUNTIME — DELIVERED DOCUMENT-EDITING PRODUCT (context only)</text>
+  <text x="48" y="992" font-size="13" fill="#6B7280">Handles end users' document-editing instructions. The Vercel deployment configuration excludes dev_workflow/.</text>
+
+  <rect class="gbox" x="100" y="1015" width="240" height="64" rx="10"/>
+  <text class="ttl" x="220" y="1042" font-size="15" fill="#4B5563" style="fill:#4B5563">Next.js frontend</text>
+  <text class="txt" x="220" y="1062" font-size="12.5" fill="#6B7280" style="fill:#6B7280">UI and typed API client</text>
+  <rect class="gbox" x="390" y="1015" width="240" height="64" rx="10"/>
+  <text class="ttl" x="510" y="1042" font-size="15" style="fill:#4B5563">FastAPI API</text>
+  <text class="txt" x="510" y="1062" font-size="12.5" style="fill:#6B7280">backend/api.py</text>
+  <rect class="gbox" x="680" y="1015" width="240" height="64" rx="10"/>
+  <text class="ttl" x="800" y="1042" font-size="15" style="fill:#4B5563">Planner and approval</text>
+  <text class="txt" x="800" y="1062" font-size="12.5" style="fill:#6B7280">backend/agent/</text>
+  <rect class="gbox" x="970" y="1015" width="240" height="64" rx="10"/>
+  <text class="ttl" x="1090" y="1042" font-size="15" style="fill:#4B5563">DOCX editor</text>
+  <text class="txt" x="1090" y="1062" font-size="12.5" style="fill:#6B7280">backend/docx_editor/</text>
+  <rect class="gbox" x="1260" y="1015" width="240" height="64" rx="10"/>
+  <text class="ttl" x="1380" y="1042" font-size="15" style="fill:#4B5563">Integrity verification</text>
+  <text class="txt" x="1380" y="1062" font-size="12.5" style="fill:#6B7280">structural and package checks</text>
+  <path class="gflow" d="M340,1047 H388"/>
+  <path class="gflow" d="M630,1047 H678"/>
+  <path class="gflow" d="M920,1047 H968"/>
+  <path class="gflow" d="M1210,1047 H1258"/>
+<metadata><c2pa:manifest>AAAWgmp1bWIAAAAeanVtZGMycGEAEQAQgAAAqgA4m3EDYzJwYQAAABZcanVtYgAAAEdqdW1kYzJtYQARABCAAACqADibcQN1cm46YzJwYTowNTc2MzIwYy01MGRjLTQ5YWMtOTM3NS00NWJjMzEzMDczZjgAAAADl2p1bWIAAAApanVtZGMyYXMAEQAQgAAAqgA4m3EDYzJwYS5hc3NlcnRpb25zAAAAALxqdW1iAAAARGp1bWRjYm9yABEAEIAAAKoAOJtxE2MycGEuaW5ncmVkaWVudC52MwAAAAAYYzJzaEswgt10HcxxQ7G9cnY3Bt8AAABwY2JvcqNpZGM6Zm9ybWF0bWltYWdlL3N2Zyt4bWxqaW5zdGFuY2VJRHgseG1wOmlpZDplMTI0ZjhjOC1hNGI5LTRiNTYtOTA4Ni1lZWU5ZGIyY2ZkMDNscmVsYXRpb25zaGlwaHBhcmVudE9mAAAB4mp1bWIAAABBanVtZGNib3IAEQAQgAAAqgA4m3ETYzJwYS5hY3Rpb25zLnYyAAAAABhjMnNoWj6FDNofhb8UumSlKifUsQAAAZljYm9yomdhY3Rpb25zgqJmYWN0aW9ua2MycGEub3BlbmVkanBhcmFtZXRlcnOha2luZ3JlZGllbnRzgaJjdXJseC1zZWxmI2p1bWJmPWMycGEuYXNzZXJ0aW9ucy9jMnBhLmluZ3JlZGllbnQudjNkaGFzaFggw0jJT0Hae0jGlTC8gEAFGbibxv+Pd5sXH3PPp9QG6bykZmFjdGlvbngdY29tLmFudGhyb3BpYy5jbGF1ZGUucHJvdmlkZWRqcGFyYW1ldGVyc6F4H2NvbS5hbnRocm9waWMub3JpZ2luLWNvbmZpZGVuY2VndW5rbm93bmtkZXNjcmlwdGlvbnhmQ2xhdWRlIHByb3ZpZGVkIHRoaXMgZmlsZSBhdCB0aGUgcmVxdWVzdCBvZiBhIHVzZXIgYW5kIG1heSBoYXZlIGNyZWF0ZWQgb3IgbW9kaWZpZWQgdGhlIGZpbGUgY29udGVudHMubXNvZnR3YXJlQWdlbnShZG5hbWVmQ2xhdWRlcmFsbEFjdGlvbnNJbmNsdWRlZPUAAADIanVtYgAAAEBqdW1kY2JvcgARABCAAACqADibcRNjMnBhLmhhc2guZGF0YQAAAAAYYzJzaMwBl+FE6mc+hR4kI3NxMykAAACAY2JvcqVjYWxnZnNoYTI1NmNwYWRMAAAAAAAAAAAAAAAAZGhhc2hYIC0N+pt3udZ/pE4Wy7xEXMTtBcmICf672tZ4AqmgCGe+ZG5hbWVuanVtYmYgbWFuaWZlc3RqZXhjbHVzaW9uc4GiZXN0YXJ0GTkEZmxlbmd0aBkeBAAAAj5qdW1iAAAAJ2p1bWRjMmNsABEAEIAAAKoAOJtxA2MycGEuY2xhaW0udjIAAAACD2Nib3KlY2FsZ2ZzaGEyNTZpc2lnbmF0dXJleE1zZWxmI2p1bWJmPS9jMnBhL3VybjpjMnBhOjA1NzYzMjBjLTUwZGMtNDlhYy05Mzc1LTQ1YmMzMTMwNzNmOC9jMnBhLnNpZ25hdHVyZWppbnN0YW5jZUlEeCx4bXA6aWlkOjQ3YjkxYWZjLWZmZDUtNGUxYy1iZTkyLWUzZjAzN2Q4N2U2NnJjcmVhdGVkX2Fzc2VydGlvbnODomN1cmx4LXNlbGYjanVtYmY9YzJwYS5hc3NlcnRpb25zL2MycGEuaW5ncmVkaWVudC52M2RoYXNoWCDDSMlPQdp7SMaVMLyAQAUZuJvG/493mxcfc8+n1AbpvKJjdXJseCpzZWxmI2p1bWJmPWMycGEuYXNzZXJ0aW9ucy9jMnBhLmFjdGlvbnMudjJkaGFzaFggDq118jRQK/BcWmwa1iQfPm6/sGphCLXsB3BqGTS114GiY3VybHgpc2VsZiNqdW1iZj1jMnBhLmFzc2VydGlvbnMvYzJwYS5oYXNoLmRhdGFkaGFzaFggC2j0B2zZfR1Z3Z+am8kw7NuRa5ZrTBa9VWeph/IjGWR0Y2xhaW1fZ2VuZXJhdG9yX2luZm+jZG5hbWVvQW50aHJvcGljIEZpbGVzZ3ZlcnNpb25lMS4wLjBrc3BlY1ZlcnNpb25lMi40LjAAABA4anVtYgAAAChqdW1kYzJjcwARABCAAACqADibcQNjMnBhLnNpZ25hdHVyZQAAABAIY2JvctKEWQISogEmGCFZAgowggIGMIIBjaADAgECAhRA5aAK7sI50L64g/oGQgU9Z1UTADAKBggqhkjOPQQDAzBJMRcwFQYDVQQKEw5BbnRocm9waWMsIFBCQzEuMCwGA1UEAxMlQW50aHJvcGljIENvbnRlbnQgQ3JlZGVudGlhbHMgUm9vdCBDQTAeFw0yNjA4MDcxODQzNTZaFw0yODA4MDYxOTQzNTZaMEQxFzAVBgNVBAoTDkFudGhyb3BpYywgUEJDMSkwJwYDVQQDEyBBbnRocm9waWMgQ2xhdWRlIENvbnRlbnQgU2lnbmluZzBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABJh6CmvLUBgFFNU0vUKlOVtE6djd17L5SuwX0LemFisBM3dkd/3cyjxFA3Qo5S46fX0/ihY0VZ7mfb9KF703t5OjWDBWMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUEDjAMBgorBgEEAYPoXgIBMAwGA1UdEwEB/wQCMAAwHwYDVR0jBBgwFoAUzlHiBIFOZFsj+OPEz5o+nMHXXMIwCgYIKoZIzj0EAwMDZwAwZAIwMXMdFJ4BetLLVY7ORuE9noqbbAZOZn/aArXyTwFAZfKrPzxF2vPoJNf1+UCdg1XGAjBwX1zd9WGqYkqmL5SFqw1QySjr1zJfpJM9+1rdDwSPLMOPOjKuiXjoU/pUUeG9RwmhY3BhZFkNngAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPZYQHk4kZvbkNMweYgVp1OyPN9u3JNUNaQcneHqH8tABOAKLFBVOrhu6Mv+pP1ObJzELN7pwKvWbeYT9X97yaoGpwg=</c2pa:manifest></metadata></svg>

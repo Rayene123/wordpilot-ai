@@ -2,6 +2,8 @@
 
 This demo uses the existing interactive DevFlow CLI to ask Codex to create `average.py` and `test_average.py` in a detached Git worktree. The host checkpoints a validated proposal and waits for a human decision. Only approval continues into implementation. The existing diff validator, change-selected host verification checks, SQLite checkpoint, and report are used.
 
+![DevFlow development lifecycle](images/devflow-development-lifecycle.svg)
+
 ## Windows prerequisites
 
 - Windows 10/11, Git for Windows, Python 3.11+ (`requirements.txt`), and Node.js/npm compatible with the project's Next.js 15 dependency (Node.js 18.18 or newer).

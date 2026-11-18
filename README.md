@@ -4,6 +4,12 @@ WordPilot is a controlled DOCX editing prototype. A backend inspects an uploaded
 
 See [the architecture and compliance evidence](docs/WORDPILOT_ARCHITECTURE.md) for the component map, workflow boundaries, supported DOCX structures, test evidence, limitations, and submission status.
 
+## Architecture at a glance
+
+![WordPilot system architecture](docs/images/wordpilot-system-architecture.svg)
+
+See the [architecture report](docs/WORDPILOT_ARCHITECTURE.md) for the execution flow, DOCX integrity pipeline, and DevFlow lifecycle diagrams.
+
 ## Case Study Compliance
 
 **CASE STUDY RESULT: REQUIREMENTS MET.** WordPilot meets the requirements of the supplied technical case study. It uses Python and LangGraph-based orchestration for document editing; supports insertion, replacement, and removal through custom document-editing tools; preserves unaffected supported DOCX content and formatting; validates structured operations and requires human approval before execution; and verifies document integrity after editing. The project includes a working sample input, instruction, and generated output. See [the architecture report](docs/WORDPILOT_ARCHITECTURE.md) for technical evidence and [functional editing test coverage](docs/WORDPILOT_ARCHITECTURE.md#functional-editing-test-coverage).

@@ -1,0 +1,269 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1550 1025" width="1550" height="1025" role="img" aria-labelledby="t d" font-family="Inter, 'Segoe UI', 'Helvetica Neue', Arial, 'Liberation Sans', sans-serif" xmlns:c2pa="http://c2pa.org/manifest">
+  <title id="t">WordPilot high-level system architecture</title>
+  <desc id="d">Five zones: user interface and document input; FastAPI backend and orchestration with a human approval boundary; AI provider layer (Ollama or Groq) used only for planning; deterministic DOCX editing and execution; integrity verification and output delivery.</desc>
+  <defs>
+    <marker id="arrC" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#2B303A"/></marker>
+    <marker id="arrD" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#2F6FB5"/></marker>
+    <symbol id="docIcon" viewBox="0 0 20 26"><path d="M1 1 H13 L19 7 V25 H1 Z" fill="#FFFFFF" stroke="#2F6FB5" stroke-width="1.6" stroke-linejoin="round"/><path d="M13 1 V7 H19" fill="none" stroke="#2F6FB5" stroke-width="1.6" stroke-linejoin="round"/><path d="M5 12 H15 M5 16 H15 M5 20 H11" stroke="#2F6FB5" stroke-width="1.4" stroke-linecap="round"/></symbol>
+    <style>
+      .lbl { font-size: 11.5px; font-style: italic; }
+      .note { font-size: 12px; font-style: italic; fill: #6B7280; }
+    </style>
+  </defs>
+  <rect width="1550" height="1025" fill="#FBFCFE"/>
+  <text x="20" y="38" font-size="24" font-weight="700" fill="#2B303A">WordPilot — High-Level System Architecture</text>
+  <text x="20" y="60" font-size="13" fill="#6B7280">Plan → human approval → deterministic DOCX edit → integrity verification. The LLM only proposes operations; it never edits the document.</text>
+  <!-- ZONE 1: browser UI (frontend/src) -->
+  <rect x="20" y="80" width="280" height="830" rx="14" fill="none" stroke="#9AA5B1" stroke-width="1.5" stroke-dasharray="7 5"/>
+  <text x="36" y="106" font-size="16" font-weight="700" fill="#2B303A">1 · User Interface</text>
+  <text x="36" y="125" font-size="12.5" fill="#6B7280">and Document Input</text>
+  <!-- ZONE 2: FastAPI backend -->
+  <rect x="350" y="80" width="400" height="830" rx="14" fill="none" stroke="#9AA5B1" stroke-width="1.5" stroke-dasharray="7 5"/>
+  <text x="366" y="106" font-size="16" font-weight="700" fill="#2B303A">2 · Backend and Orchestration</text>
+  <text x="366" y="125" font-size="12.5" fill="#6B7280">FastAPI · backend/api.py</text>
+  <!-- ZONE 3: AI providers -->
+  <rect x="800" y="80" width="340" height="345" rx="14" fill="none" stroke="#9AA5B1" stroke-width="1.5" stroke-dasharray="7 5"/>
+  <text x="816" y="106" font-size="16" font-weight="700" fill="#2B303A">3 · AI Provider Layer</text>
+  <text x="816" y="125" font-size="12.5" fill="#6B7280">planning only · provider.py</text>
+  <!-- ZONE 4: editing and execution -->
+  <rect x="800" y="445" width="340" height="465" rx="14" fill="none" stroke="#9AA5B1" stroke-width="1.5" stroke-dasharray="7 5"/>
+  <text x="816" y="471" font-size="16" font-weight="700" fill="#2B303A">4 · DOCX Editing and Execution</text>
+  <text x="816" y="490" font-size="12.5" fill="#6B7280">host-controlled · deterministic</text>
+  <!-- ZONE 5: verification and output -->
+  <rect x="1190" y="80" width="340" height="830" rx="14" fill="none" stroke="#9AA5B1" stroke-width="1.5" stroke-dasharray="7 5"/>
+  <text x="1206" y="106" font-size="16" font-weight="700" fill="#2B303A">5 · Integrity Verification</text>
+  <text x="1206" y="125" font-size="12.5" fill="#6B7280">and Output</text>
+  <!-- Zone 1 components -->
+  <circle cx="165" cy="157" r="9" fill="#2F6FB5"/>
+  <path d="M147 187 Q147 168 165 168 Q183 168 183 187 Z" fill="#2F6FB5"/>
+  <text x="192" y="178" font-size="14" font-weight="700" fill="#2B303A">User</text>
+  <circle cx="128" cy="172" r="9.5" fill="#2B303A"/>
+  <text x="128" y="176" font-size="11.5" font-weight="700" fill="#FFFFFF" text-anchor="middle">1</text>
+  <path d="M158 192 L112 213" fill="none" stroke="#2B303A" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrC)"/>
+  <path d="M172 192 L208 213" fill="none" stroke="#2B303A" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrC)"/>
+  <rect x="40" y="214" width="115" height="64" rx="6" fill="#FFFFFF" stroke="#2F6FB5" stroke-width="1.5"/>
+  <use href="#docIcon" x="87" y="219" width="20" height="26"/>
+  <text x="97.5" y="259" font-size="13" font-weight="700" fill="#2B303A" text-anchor="middle">Original DOCX</text>
+  <text x="97.5" y="274" font-size="12" fill="#3F4856" text-anchor="middle">≤ 15 MiB</text>
+  <rect x="165" y="214" width="115" height="64" rx="6" fill="#FFFFFF" stroke="#2F6FB5" stroke-width="1.5"/>
+  <rect x="211" y="222" width="23" height="17" rx="4" fill="#FFFFFF" stroke="#2F6FB5" stroke-width="1.6"/>
+  <path d="M217 239 L215 246 L223 239" fill="#FFFFFF" stroke="#2F6FB5" stroke-width="1.6" stroke-linejoin="round"/>
+  <path d="M215 228 H230 M215 233 H225" stroke="#2F6FB5" stroke-width="1.4" stroke-linecap="round"/>
+  <text x="222.5" y="259" font-size="13" font-weight="700" fill="#2B303A" text-anchor="middle">Instruction</text>
+  <text x="222.5" y="274" font-size="12" fill="#3F4856" text-anchor="middle">natural language</text>
+  <path d="M97 278 V298" fill="none" stroke="#2B303A" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrC)"/>
+  <path d="M222 278 V298" fill="none" stroke="#2B303A" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrC)"/>
+  <!-- Frontend -->
+  <rect x="40" y="300" width="240" height="58" rx="6" fill="#2F6FB5" stroke="#2F6FB5" stroke-width="1.5"/>
+  <text x="54" y="316.0" font-size="15" font-weight="700" fill="#FFFFFF">WordPilot frontend</text>
+  <text x="54" y="337.0" font-size="13.5" fill="#EAF1FA">Next.js client</text>
+  <text x="54" y="356.0" font-size="13.5" fill="#EAF1FA">upload · review · decide</text>
+  <!-- Proposal review panel -->
+  <rect x="40" y="372" width="240" height="70" rx="6" fill="#FFFFFF" stroke="#2F6FB5" stroke-width="1.5"/>
+  <text x="54" y="394.0" font-size="15" font-weight="700" fill="#2B303A">Proposal review</text>
+  <text x="54" y="415.0" font-size="13.5" fill="#3F4856">exact operations shown</text>
+  <text x="54" y="434.0" font-size="13.5" fill="#3F4856">before any edit</text>
+  <path d="M160 442 V462" fill="none" stroke="#2B303A" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrC)"/>
+  <rect x="40" y="462" width="115" height="36" rx="6" fill="#FFFFFF" stroke="#2B303A" stroke-width="1.5"/>
+  <text x="97.5" y="485" font-size="13" font-weight="700" fill="#2B303A" text-anchor="middle">Reject</text>
+  <rect x="165" y="462" width="115" height="36" rx="6" fill="#2F6FB5" stroke="#2F6FB5" stroke-width="1.5"/>
+  <text x="222.5" y="485" font-size="13" font-weight="700" fill="#FFFFFF" text-anchor="middle">Approve</text>
+  <!-- Result panel -->
+  <rect x="40" y="650" width="240" height="70" rx="6" fill="#FFFFFF" stroke="#2F6FB5" stroke-width="1.5"/>
+  <text x="54" y="672.0" font-size="15" font-weight="700" fill="#2B303A">Result view</text>
+  <text x="54" y="693.0" font-size="13.5" fill="#3F4856">execution status</text>
+  <text x="54" y="712.0" font-size="13.5" fill="#3F4856">integrity report</text>
+  <!-- Generated DOCX download card -->
+  <rect x="40" y="745" width="240" height="105" rx="6" fill="#FFFFFF" stroke="#2F6FB5" stroke-width="1.5"/>
+  <use href="#docIcon" x="54" y="775" width="30" height="39"/>
+  <text x="100" y="772" font-size="14" font-weight="700" fill="#2B303A">Generated DOCX</text>
+  <text x="100" y="796" font-size="13.5" fill="#3F4856">download only if passed</text>
+  <!-- Request handling -->
+  <rect x="370" y="150" width="360" height="46" rx="6" fill="#2F6FB5" stroke="#2F6FB5" stroke-width="1.5"/>
+  <text x="384" y="169.5" font-size="15" font-weight="700" fill="#FFFFFF">FastAPI application</text>
+  <text x="384" y="190.5" font-size="13.5" fill="#EAF1FA">request models · CORS · path redaction</text>
+  <!-- Upload endpoint -->
+  <rect x="370" y="208" width="360" height="58" rx="6" fill="#2F6FB5" stroke="#2F6FB5" stroke-width="1.5"/>
+  <text x="384" y="224.0" font-size="15" font-weight="700" fill="#FFFFFF">POST /upload</text>
+  <text x="384" y="245.0" font-size="13.5" fill="#EAF1FA">only .docx · ≤ 15 MiB · ZIP check</text>
+  <text x="384" y="264.0" font-size="13.5" fill="#EAF1FA">opened with python-docx</text>
+  <!-- Plan endpoint -->
+  <rect x="370" y="278" width="360" height="60" rx="6" fill="#2F6FB5" stroke="#2F6FB5" stroke-width="1.5"/>
+  <text x="384" y="295.0" font-size="15" font-weight="700" fill="#FFFFFF">POST /plan</text>
+  <text x="384" y="316.0" font-size="13.5" fill="#EAF1FA">inspect source · SHA-256 fingerprint</text>
+  <text x="384" y="335.0" font-size="13.5" fill="#EAF1FA">planning makes no edits</text>
+  <path d="M550 338 V360" fill="none" stroke="#2B303A" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrC)"/>
+  <!-- Proposal registry -->
+  <rect x="370" y="360" width="360" height="50" rx="6" fill="#EAF1FA" stroke="#2F6FB5" stroke-width="1.5"/>
+  <text x="384" y="381.5" font-size="15" font-weight="700" fill="#2B303A">Proposal registry</text>
+  <text x="384" y="402.5" font-size="13.5" fill="#3F4856">one-time token · in-memory</text>
+  <path d="M550 410 V430" fill="none" stroke="#2B303A" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrC)"/>
+  <!-- HUMAN APPROVAL BOUNDARY -->
+  <rect x="350" y="430" width="400" height="64" fill="#2B303A"/>
+  <rect x="364" y="446" width="14" height="11" rx="2" fill="#FFFFFF"/><path d="M367 446 V442 Q371 436 375 442 V446" fill="none" stroke="#FFFFFF" stroke-width="2"/>
+  <text x="550" y="451" font-size="15" font-weight="700" fill="#FFFFFF" text-anchor="middle" letter-spacing="1">HUMAN APPROVAL BOUNDARY</text>
+  <text x="550" y="472" font-size="13.5" fill="#E5E7EB" text-anchor="middle">No edit before approval · reject creates no output</text>
+  <path d="M550 494 V510" fill="none" stroke="#2B303A" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrC)"/>
+  <!-- Approve endpoint -->
+  <rect x="370" y="510" width="360" height="85" rx="6" fill="#2F6FB5" stroke="#2F6FB5" stroke-width="1.5"/>
+  <text x="384" y="530.0" font-size="15" font-weight="700" fill="#FFFFFF">POST /approve</text>
+  <text x="384" y="551.0" font-size="13.5" fill="#EAF1FA">token + proposal text unchanged</text>
+  <text x="384" y="570.0" font-size="13.5" fill="#EAF1FA">source fingerprint · re-validate ops</text>
+  <text x="384" y="589.0" font-size="13.5" fill="#EAF1FA">token consumed once</text>
+  <path d="M550 595 V613" fill="none" stroke="#2B303A" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrC)"/>
+  <!-- Orchestration entry -->
+  <rect x="370" y="613" width="360" height="65" rx="6" fill="#2F6FB5" stroke="#2F6FB5" stroke-width="1.5"/>
+  <text x="384" y="632.5" font-size="15" font-weight="700" fill="#FFFFFF">execute_approved_proposal()</text>
+  <text x="384" y="653.5" font-size="13.5" fill="#EAF1FA">runs executor, then verifier</text>
+  <text x="384" y="672.5" font-size="13.5" fill="#EAF1FA">output is always a new file</text>
+  <path d="M550 678 V700" fill="none" stroke="#2B303A" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrC)"/>
+  <!-- Response and download -->
+  <rect x="370" y="700" width="360" height="92" rx="6" fill="#2F6FB5" stroke="#2F6FB5" stroke-width="1.5"/>
+  <text x="384" y="733.0" font-size="15" font-weight="700" fill="#FFFFFF">Response and download</text>
+  <text x="384" y="754.0" font-size="13.5" fill="#EAF1FA">status + integrity report</text>
+  <text x="384" y="773.0" font-size="13.5" fill="#EAF1FA">download ID · internal paths redacted</text>
+  <!-- Planner -->
+  <rect x="820" y="150" width="300" height="98" rx="6" fill="#2F6FB5" stroke="#2F6FB5" stroke-width="1.5"/>
+  <text x="834" y="176.5" font-size="15" font-weight="700" fill="#FFFFFF">OperationPlanner</text>
+  <text x="834" y="197.5" font-size="13.5" fill="#EAF1FA">instruction + document context in</text>
+  <text x="834" y="216.5" font-size="13.5" fill="#EAF1FA">structured plan out</text>
+  <text x="834" y="235.5" font-size="13.5" fill="#EAF1FA">proposes only: no tools, no file path</text>
+  <path d="M970 248 V272" fill="none" stroke="#2F6FB5" stroke-width="2.4" marker-start="url(#arrD)" marker-end="url(#arrD)"/>
+  <!-- Provider adapter -->
+  <rect x="820" y="272" width="300" height="60" rx="6" fill="#EAF1FA" stroke="#2F6FB5" stroke-width="1.5"/>
+  <text x="834" y="298.5" font-size="15" font-weight="700" fill="#2B303A">Provider adapter</text>
+  <text x="834" y="319.5" font-size="13.5" fill="#3F4856">LangChain · provider chosen by config</text>
+  <path d="M892 332 V358" fill="none" stroke="#2F6FB5" stroke-width="2.4" marker-start="url(#arrD)" marker-end="url(#arrD)"/>
+  <path d="M1048 332 V358" fill="none" stroke="#2F6FB5" stroke-width="2.4" marker-start="url(#arrD)" marker-end="url(#arrD)"/>
+  <text x="970" y="350" class="lbl" text-anchor="middle" fill="none" stroke="#FBFCFE" stroke-width="4" stroke-linejoin="round">one active provider</text>
+  <text x="970" y="350" class="lbl" text-anchor="middle" fill="#2F6FB5" stroke="none">one active provider</text>
+  <!-- Ollama -->
+  <rect x="820" y="358" width="140" height="56" rx="6" fill="#FFFFFF" stroke="#2F6FB5" stroke-width="1.5"/>
+  <text x="834" y="382.5" font-size="15" font-weight="700" fill="#2B303A">Ollama</text>
+  <text x="834" y="403.5" font-size="13.5" fill="#3F4856">default · local</text>
+  <!-- Groq -->
+  <rect x="970" y="358" width="150" height="56" rx="6" fill="#FFFFFF" stroke="#2F6FB5" stroke-width="1.5"/>
+  <text x="984" y="382.5" font-size="15" font-weight="700" fill="#2B303A">Groq</text>
+  <text x="984" y="403.5" font-size="13.5" fill="#3F4856">cloud · API key</text>
+  <!-- LangGraph graph (separate path) -->
+  <rect x="820" y="508" width="300" height="80" rx="6" fill="#FFFFFF" stroke="#6B7280" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="834" y="535.0" font-size="15" font-weight="700" fill="#2B303A">LangGraph graph</text>
+  <text x="834" y="556.0" font-size="13.5" fill="#4B5563">inspect → validate → execute</text>
+  <text x="834" y="575.0" font-size="13.5" fill="#4B5563">separate path; not called by API</text>
+  <path d="M970 588 V610" fill="none" stroke="#6B7280" stroke-width="1.6" stroke-dasharray="2 3"/>
+  <text x="982" y="603" class="lbl" text-anchor="start" fill="none" stroke="#FBFCFE" stroke-width="4" stroke-linejoin="round">shares _execute_node</text>
+  <text x="982" y="603" class="lbl" text-anchor="start" fill="#2F6FB5" stroke="none">shares _execute_node</text>
+  <!-- Executor -->
+  <rect x="820" y="610" width="300" height="58" rx="6" fill="#2F6FB5" stroke="#2F6FB5" stroke-width="1.5"/>
+  <text x="834" y="626.0" font-size="15" font-weight="700" fill="#FFFFFF">Executor (_execute_node)</text>
+  <text x="834" y="647.0" font-size="13.5" fill="#EAF1FA">ops in order · stop on failure</text>
+  <text x="834" y="666.0" font-size="13.5" fill="#EAF1FA">unique output file</text>
+  <path d="M970 668 V686" fill="none" stroke="#2B303A" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrC)"/>
+  <!-- Tools -->
+  <rect x="820" y="686" width="300" height="58" rx="6" fill="#2F6FB5" stroke="#2F6FB5" stroke-width="1.5"/>
+  <text x="834" y="702.0" font-size="15" font-weight="700" fill="#FFFFFF">Fixed tools</text>
+  <text x="834" y="723.0" font-size="13.5" fill="#EAF1FA">replace_text · insert_paragraph</text>
+  <text x="834" y="742.0" font-size="13.5" fill="#EAF1FA">remove_paragraph</text>
+  <path d="M970 744 V762" fill="none" stroke="#2B303A" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrC)"/>
+  <!-- DOCX operations -->
+  <rect x="820" y="762" width="300" height="58" rx="6" fill="#2F6FB5" stroke="#2F6FB5" stroke-width="1.5"/>
+  <text x="834" y="778.0" font-size="15" font-weight="700" fill="#FFFFFF">docx_editor operations</text>
+  <text x="834" y="799.0" font-size="13.5" fill="#EAF1FA">in-place text edits</text>
+  <text x="834" y="818.0" font-size="13.5" fill="#EAF1FA">guarded insert / remove</text>
+  <path d="M970 820 V838" fill="none" stroke="#2B303A" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrC)"/>
+  <!-- Package preservation -->
+  <rect x="820" y="838" width="300" height="58" rx="6" fill="#2F6FB5" stroke="#2F6FB5" stroke-width="1.5"/>
+  <text x="834" y="854.0" font-size="15" font-weight="700" fill="#FFFFFF">Package preservation</text>
+  <text x="834" y="875.0" font-size="13.5" fill="#EAF1FA">rewritten document.xml</text>
+  <text x="834" y="894.0" font-size="13.5" fill="#EAF1FA">all other ZIP parts copied as-is</text>
+  <!-- Verifier -->
+  <rect x="1210" y="150" width="300" height="65" rx="6" fill="#2F6FB5" stroke="#2F6FB5" stroke-width="1.5"/>
+  <text x="1224" y="169.5" font-size="15" font-weight="700" fill="#FFFFFF">Integrity verifier</text>
+  <text x="1224" y="190.5" font-size="13.5" fill="#EAF1FA">compares source vs. output</text>
+  <text x="1224" y="209.5" font-size="13.5" fill="#EAF1FA">against approved operations only</text>
+  <path d="M1430 215 V246" fill="none" stroke="#2B303A" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrC)"/>
+  <text x="1210" y="238" class="lbl" text-anchor="start" fill="none" stroke="#FBFCFE" stroke-width="4" stroke-linejoin="round">8 integrity checks</text>
+  <text x="1210" y="238" class="lbl" text-anchor="start" fill="#2F6FB5" stroke="none">8 integrity checks</text>
+  <rect x="1210" y="246" width="300" height="30" rx="5" fill="#EAF1FA" stroke="#2F6FB5" stroke-width="1.2"/>
+  <text x="1224" y="266" font-size="12.5" fill="#2B303A">1. Approved operation outcomes</text>
+  <rect x="1210" y="281" width="300" height="30" rx="5" fill="#EAF1FA" stroke="#2F6FB5" stroke-width="1.2"/>
+  <text x="1224" y="301" font-size="12.5" fill="#2B303A">2. Paragraph text and order</text>
+  <rect x="1210" y="316" width="300" height="30" rx="5" fill="#EAF1FA" stroke="#2F6FB5" stroke-width="1.2"/>
+  <text x="1224" y="336" font-size="12.5" fill="#2B303A">3. Paragraph formatting</text>
+  <rect x="1210" y="351" width="300" height="30" rx="5" fill="#EAF1FA" stroke="#2F6FB5" stroke-width="1.2"/>
+  <text x="1224" y="371" font-size="12.5" fill="#2B303A">4. Table count and dimensions</text>
+  <rect x="1210" y="386" width="300" height="30" rx="5" fill="#EAF1FA" stroke="#2F6FB5" stroke-width="1.2"/>
+  <text x="1224" y="406" font-size="12.5" fill="#2B303A">5. Table formatting</text>
+  <rect x="1210" y="421" width="300" height="30" rx="5" fill="#EAF1FA" stroke="#2F6FB5" stroke-width="1.2"/>
+  <text x="1224" y="441" font-size="12.5" fill="#2B303A">6. Section properties</text>
+  <rect x="1210" y="456" width="300" height="30" rx="5" fill="#EAF1FA" stroke="#2F6FB5" stroke-width="1.2"/>
+  <text x="1224" y="476" font-size="12.5" fill="#2B303A">7. Inline images and binary hashes</text>
+  <rect x="1210" y="491" width="300" height="30" rx="5" fill="#EAF1FA" stroke="#2F6FB5" stroke-width="1.2"/>
+  <text x="1224" y="511" font-size="12.5" fill="#2B303A">8. DOCX package integrity</text>
+  <path d="M1430 521 V545" fill="none" stroke="#2B303A" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrC)"/>
+  <!-- Verification result -->
+  <rect x="1210" y="545" width="300" height="80" rx="6" fill="#FFFFFF" stroke="#2F6FB5" stroke-width="1.5"/>
+  <text x="1222" y="565" font-size="14" font-weight="700" fill="#2B303A">Verification result</text>
+  <rect x="1222" y="580" width="62" height="24" rx="12" fill="#2F6FB5"/><text x="1253" y="596" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">passed</text>
+  <rect x="1292" y="580" width="124" height="24" rx="12" fill="#EAF1FA" stroke="#2F6FB5"/><text x="1354" y="596" font-size="12" fill="#2B303A" text-anchor="middle">partially_verified</text>
+  <rect x="1424" y="580" width="62" height="24" rx="12" fill="#E5E7EB" stroke="#6B7280"/><text x="1455" y="596" font-size="12" fill="#2B303A" text-anchor="middle">failed</text>
+  <path d="M1430 625 V645" fill="none" stroke="#2B303A" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrC)"/>
+  <!-- Generated DOCX output -->
+  <rect x="1210" y="645" width="300" height="80" rx="6" fill="#FFFFFF" stroke="#2F6FB5" stroke-width="1.5"/>
+  <use href="#docIcon" x="1224" y="665" width="30" height="39"/>
+  <text x="1268" y="668" font-size="14" font-weight="700" fill="#2B303A">Generated DOCX</text>
+  <text x="1268" y="686" font-size="13" fill="#3F4856">new unique file</text>
+  <text x="1268" y="703" font-size="13" fill="#3F4856">original never overwritten</text>
+  <path d="M1430 725 V745" fill="none" stroke="#2B303A" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrC)"/>
+  <!-- Delivery -->
+  <rect x="1210" y="745" width="300" height="75" rx="6" fill="#EAF1FA" stroke="#2F6FB5" stroke-width="1.5"/>
+  <text x="1224" y="769.5" font-size="15" font-weight="700" fill="#2B303A">Output delivery</text>
+  <text x="1224" y="790.5" font-size="13.5" fill="#3F4856">download ID returned to UI</text>
+  <text x="1224" y="809.5" font-size="13.5" fill="#3F4856">download only if passed</text>
+  <!-- Flows between zones -->
+  <path d="M280 306 H318 V237 H370" fill="none" stroke="#2F6FB5" stroke-width="2.4" marker-end="url(#arrD)"/>
+  <circle cx="318" cy="268" r="9.5" fill="#2B303A"/>
+  <text x="318" y="272" font-size="11.5" font-weight="700" fill="#FFFFFF" text-anchor="middle">2</text>
+  <path d="M280 322 H370" fill="none" stroke="#2B303A" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrC)"/>
+  <circle cx="342" cy="322" r="9.5" fill="#2B303A"/>
+  <text x="342" y="326" font-size="11.5" font-weight="700" fill="#FFFFFF" text-anchor="middle">3</text>
+  <path d="M730 296 H764 V196 H820" fill="none" stroke="#2F6FB5" stroke-width="2.4" marker-end="url(#arrD)"/>
+  <circle cx="764" cy="250" r="9.5" fill="#2B303A"/>
+  <text x="764" y="254" font-size="11.5" font-weight="700" fill="#FFFFFF" text-anchor="middle">4</text>
+  <path d="M820 232 H782 V322 H730" fill="none" stroke="#2B303A" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrC)"/>
+  <circle cx="782" cy="285" r="9.5" fill="#2B303A"/>
+  <text x="782" y="289" font-size="11.5" font-weight="700" fill="#FFFFFF" text-anchor="middle">5</text>
+  <path d="M370 385 H280" fill="none" stroke="#2B303A" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrC)"/>
+  <circle cx="325" cy="385" r="9.5" fill="#2B303A"/>
+  <text x="325" y="389" font-size="11.5" font-weight="700" fill="#FFFFFF" text-anchor="middle">6</text>
+  <path d="M280 480 H350" fill="none" stroke="#2B303A" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrC)"/>
+  <circle cx="315" cy="480" r="9.5" fill="#2B303A"/>
+  <text x="315" y="484" font-size="11.5" font-weight="700" fill="#FFFFFF" text-anchor="middle">7</text>
+  <path d="M730 640 H820" fill="none" stroke="#2B303A" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrC)"/>
+  <circle cx="775" cy="640" r="9.5" fill="#2B303A"/>
+  <text x="775" y="644" font-size="11.5" font-weight="700" fill="#FFFFFF" text-anchor="middle">8</text>
+  <path d="M1120 867 H1165 V182 H1210" fill="none" stroke="#2F6FB5" stroke-width="2.4" marker-end="url(#arrD)"/>
+  <circle cx="1165" cy="520" r="9.5" fill="#2B303A"/>
+  <text x="1165" y="524" font-size="11.5" font-weight="700" fill="#FFFFFF" text-anchor="middle">9</text>
+  <path d="M1360 820 V958 H700 V794" fill="none" stroke="#2B303A" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrC)"/>
+  <circle cx="1360" cy="890" r="9.5" fill="#2B303A"/>
+  <text x="1360" y="894" font-size="11.5" font-weight="700" fill="#FFFFFF" text-anchor="middle">10</text>
+  <text x="1030" y="950" class="lbl" text-anchor="middle" fill="none" stroke="#FBFCFE" stroke-width="4" stroke-linejoin="round">integrity report + output return to the API</text>
+  <text x="1030" y="950" class="lbl" text-anchor="middle" fill="#2F6FB5" stroke="none">integrity report + output return to the API</text>
+  <path d="M370 712 H280" fill="none" stroke="#2B303A" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrC)"/>
+  <circle cx="325" cy="712" r="9.5" fill="#2B303A"/>
+  <text x="325" y="716" font-size="11.5" font-weight="700" fill="#FFFFFF" text-anchor="middle">11</text>
+  <path d="M370 770 H280" fill="none" stroke="#2F6FB5" stroke-width="2.4" marker-end="url(#arrD)"/>
+  <circle cx="325" cy="770" r="9.5" fill="#2B303A"/>
+  <text x="325" y="774" font-size="11.5" font-weight="700" fill="#FFFFFF" text-anchor="middle">12</text>
+  <!-- Legend -->
+  <path d="M20 985 H62" stroke="#2B303A" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrC)"/>
+  <text x="72" y="989" font-size="12.5" fill="#2B303A">Control flow</text>
+  <path d="M178 985 H220" stroke="#2F6FB5" stroke-width="2.4" marker-end="url(#arrD)"/>
+  <text x="230" y="989" font-size="12.5" fill="#2B303A">Document / data flow</text>
+  <rect x="388" y="977" width="34" height="16" fill="#2B303A"/><text x="432" y="989" font-size="12.5" fill="#2B303A">Approval boundary</text>
+  <rect x="560" y="977" width="34" height="16" rx="3" fill="#2F6FB5"/><text x="604" y="989" font-size="12.5" fill="#2B303A">Component</text>
+  <rect x="702" y="977" width="34" height="16" rx="3" fill="#EAF1FA" stroke="#2F6FB5"/><text x="746" y="989" font-size="12.5" fill="#2B303A">Supporting detail</text>
+  <rect x="900" y="977" width="34" height="16" rx="3" fill="#FFFFFF" stroke="#6B7280" stroke-dasharray="4 3"/><text x="944" y="989" font-size="12.5" fill="#2B303A">Not on API path</text>
+<metadata><c2pa:manifest>AAAWgmp1bWIAAAAeanVtZGMycGEAEQAQgAAAqgA4m3EDYzJwYQAAABZcanVtYgAAAEdqdW1kYzJtYQARABCAAACqADibcQN1cm46YzJwYTpkN2RkYWY2OS1jMjMwLTRkNTMtYjAzNC1jMmVhZjQzODUxMmQAAAADl2p1bWIAAAApanVtZGMyYXMAEQAQgAAAqgA4m3EDYzJwYS5hc3NlcnRpb25zAAAAALxqdW1iAAAARGp1bWRjYm9yABEAEIAAAKoAOJtxE2MycGEuaW5ncmVkaWVudC52MwAAAAAYYzJzaJt7aTcU6i43cBx9PeClQr4AAABwY2JvcqNpZGM6Zm9ybWF0bWltYWdlL3N2Zyt4bWxqaW5zdGFuY2VJRHgseG1wOmlpZDoxMmZmZGU3NS1lODMwLTRmMWEtOTNkMy02NDFmMTdmOWMyNGJscmVsYXRpb25zaGlwaHBhcmVudE9mAAAB4mp1bWIAAABBanVtZGNib3IAEQAQgAAAqgA4m3ETYzJwYS5hY3Rpb25zLnYyAAAAABhjMnNo1VvS4VD8b4klyZOiA4zYiwAAAZljYm9yomdhY3Rpb25zgqJmYWN0aW9ua2MycGEub3BlbmVkanBhcmFtZXRlcnOha2luZ3JlZGllbnRzgaJjdXJseC1zZWxmI2p1bWJmPWMycGEuYXNzZXJ0aW9ucy9jMnBhLmluZ3JlZGllbnQudjNkaGFzaFggx153uFVrtA0dTPOZamhBvj19nfJM1olS6iHSlfdEu4OkZmFjdGlvbngdY29tLmFudGhyb3BpYy5jbGF1ZGUucHJvdmlkZWRqcGFyYW1ldGVyc6F4H2NvbS5hbnRocm9waWMub3JpZ2luLWNvbmZpZGVuY2VndW5rbm93bmtkZXNjcmlwdGlvbnhmQ2xhdWRlIHByb3ZpZGVkIHRoaXMgZmlsZSBhdCB0aGUgcmVxdWVzdCBvZiBhIHVzZXIgYW5kIG1heSBoYXZlIGNyZWF0ZWQgb3IgbW9kaWZpZWQgdGhlIGZpbGUgY29udGVudHMubXNvZnR3YXJlQWdlbnShZG5hbWVmQ2xhdWRlcmFsbEFjdGlvbnNJbmNsdWRlZPUAAADIanVtYgAAAEBqdW1kY2JvcgARABCAAACqADibcRNjMnBhLmhhc2guZGF0YQAAAAAYYzJzaI5GFoFBQ9SkCAaZ+rMBEckAAACAY2JvcqVjYWxnZnNoYTI1NmNwYWRMAAAAAAAAAAAAAAAAZGhhc2hYIIPHQILE+qvQP71HfJ8G9Blr/vYL15F55lKf9P9QiMNYZG5hbWVuanVtYmYgbWFuaWZlc3RqZXhjbHVzaW9uc4GiZXN0YXJ0GWQbZmxlbmd0aBkeBAAAAj5qdW1iAAAAJ2p1bWRjMmNsABEAEIAAAKoAOJtxA2MycGEuY2xhaW0udjIAAAACD2Nib3KlY2FsZ2ZzaGEyNTZpc2lnbmF0dXJleE1zZWxmI2p1bWJmPS9jMnBhL3VybjpjMnBhOmQ3ZGRhZjY5LWMyMzAtNGQ1My1iMDM0LWMyZWFmNDM4NTEyZC9jMnBhLnNpZ25hdHVyZWppbnN0YW5jZUlEeCx4bXA6aWlkOjgzNDVmMDFlLTk4NmYtNDMxZC04NjAyLWZlNWY1NzI3ZGFlNXJjcmVhdGVkX2Fzc2VydGlvbnODomN1cmx4LXNlbGYjanVtYmY9YzJwYS5hc3NlcnRpb25zL2MycGEuaW5ncmVkaWVudC52M2RoYXNoWCDHXne4VWu0DR1M85lqaEG+PX2d8kzWiVLqIdKV90S7g6JjdXJseCpzZWxmI2p1bWJmPWMycGEuYXNzZXJ0aW9ucy9jMnBhLmFjdGlvbnMudjJkaGFzaFggVZkPJVHykLKzJWXQPtwzPF49jcvjbwnwuHbgCpPMmMCiY3VybHgpc2VsZiNqdW1iZj1jMnBhLmFzc2VydGlvbnMvYzJwYS5oYXNoLmRhdGFkaGFzaFggIdh7XYpi0E986vpTlZVCoGg7Cs48gKSq0VY4en5mv6l0Y2xhaW1fZ2VuZXJhdG9yX2luZm+jZG5hbWVvQW50aHJvcGljIEZpbGVzZ3ZlcnNpb25lMS4wLjBrc3BlY1ZlcnNpb25lMi40LjAAABA4anVtYgAAAChqdW1kYzJjcwARABCAAACqADibcQNjMnBhLnNpZ25hdHVyZQAAABAIY2JvctKEWQISogEmGCFZAgowggIGMIIBjaADAgECAhRA5aAK7sI50L64g/oGQgU9Z1UTADAKBggqhkjOPQQDAzBJMRcwFQYDVQQKEw5BbnRocm9waWMsIFBCQzEuMCwGA1UEAxMlQW50aHJvcGljIENvbnRlbnQgQ3JlZGVudGlhbHMgUm9vdCBDQTAeFw0yNjA4MDcxODQzNTZaFw0yODA4MDYxOTQzNTZaMEQxFzAVBgNVBAoTDkFudGhyb3BpYywgUEJDMSkwJwYDVQQDEyBBbnRocm9waWMgQ2xhdWRlIENvbnRlbnQgU2lnbmluZzBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABJh6CmvLUBgFFNU0vUKlOVtE6djd17L5SuwX0LemFisBM3dkd/3cyjxFA3Qo5S46fX0/ihY0VZ7mfb9KF703t5OjWDBWMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUEDjAMBgorBgEEAYPoXgIBMAwGA1UdEwEB/wQCMAAwHwYDVR0jBBgwFoAUzlHiBIFOZFsj+OPEz5o+nMHXXMIwCgYIKoZIzj0EAwMDZwAwZAIwMXMdFJ4BetLLVY7ORuE9noqbbAZOZn/aArXyTwFAZfKrPzxF2vPoJNf1+UCdg1XGAjBwX1zd9WGqYkqmL5SFqw1QySjr1zJfpJM9+1rdDwSPLMOPOjKuiXjoU/pUUeG9RwmhY3BhZFkNngAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPZYQC5Njd+1/+kNKZyVPJYiZbtFPkZx3OpQign8fQvgLIhAQNOZXG3KGSk9uFP2wQFXIDl7OfbFePhr69U8G24JQvU=</c2pa:manifest></metadata></svg>

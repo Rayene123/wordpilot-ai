@@ -28,7 +28,9 @@ In the compliance matrix, **VERIFIED** means the supplied implementation and exe
 
 **Caption — WordPilot runtime components and host-controlled document boundary.**
 
-<!-- DIAGRAM PLACEHOLDER: wordpilot-runtime -->
+![High-level WordPilot system architecture](images/wordpilot-system-architecture.svg)
+
+*Figure 1. WordPilot runtime components, approval boundary, and verified DOCX delivery. The API uses the planner and deterministic executor directly; the separately compiled LangGraph workflow is shown as an alternate operation path and is not called by the HTTP API.*
 
 The delivered product runtime is the FastAPI application in [`backend/api.py`](../backend/api.py), the planner and orchestration in [`backend/agent/`](../backend/agent/), the DOCX inspection/editor/integrity modules in [`backend/docx_editor/`](../backend/docx_editor/), and the Next.js client in [`frontend/src/`](../frontend/src/). The browser sends instructions and displays proposals/results; document parsing and edits stay on the backend. The API chooses upload and output paths, keeps internal paths out of public proposals, and exposes downloads only through registered IDs.
 
@@ -46,7 +48,7 @@ This is not a streaming API and it does not render an editable/live Word preview
 
 **Caption — Deterministic LangGraph operation path from inspection through final status.**
 
-<!-- DIAGRAM PLACEHOLDER: document-edit-graph -->
+![LangGraph document execution flow](images/wordpilot-langgraph-execution-flow.svg)
 
 [`backend/agent/graph.py`](../backend/agent/graph.py) compiles `build_document_graph(output_directory)` with these nodes:
 
@@ -71,7 +73,7 @@ Important boundary: this compiled graph accepts operation dictionaries supplied 
 
 **Caption — DOCX package parts and structural checks around an approved body edit.**
 
-<!-- DIAGRAM PLACEHOLDER: docx-integrity-boundary -->
+![DOCX integrity pipeline](images/wordpilot-docx-integrity-pipeline.svg)
 
 ### Read and edit behavior
 
@@ -201,7 +203,7 @@ The README keeps the user-facing overview short and links here for technical evi
 
 **Caption — DevFlow's proposal approval and detached-worktree lifecycle, separate from WordPilot document editing.**
 
-<!-- DIAGRAM PLACEHOLDER: devflow-lifecycle -->
+![DevFlow development lifecycle](images/devflow-development-lifecycle.svg)
 
 [`dev_workflow/`](../dev_workflow/) is an optional Codex CLI development orchestrator, not a document-editing provider or dependency. Its LangGraph stages cover read-only analysis, strict proposal validation, fingerprint-bound human approval/revision, detached worktree implementation, host-side diff validation, fixed host-selected verification, and evidence-based reporting. This is an initial version built within the available time. It can be improved with a dedicated independent review stage, an automated correction loop, and a richer approval experience; those enhancements were left for future work. Its verification/review limits are detailed in [`dev_workflow/VERIFICATION_LIFECYCLE.md`](../dev_workflow/VERIFICATION_LIFECYCLE.md); the CTO demo is in [`docs/DEVFLOW_CTO_DEMO.md`](DEVFLOW_CTO_DEMO.md).
 
