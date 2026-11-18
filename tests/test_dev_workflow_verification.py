@@ -205,6 +205,63 @@ def test_diff_change_invalidates_results(tmp_path, monkeypatch):
     assert "invalidated" in result.stdout
 
 
+@pytest.mark.parametrize(("paths", "expected_ids"), [
+    (["backend/value.py", "tests/test_value.py"], ["python.tests"]),
+    (["frontend/src/page.tsx"], ["frontend.typecheck"]),
+    (["backend/value.py", "frontend/src/page.tsx"], ["python.tests", "frontend.typecheck"]),
+    (["README.md", "docs/usage.rst"], []),
+    (["requirements.txt"], ["python.tests", "frontend.typecheck"]),
+])
+def test_checks_are_selected_from_host_changed_paths(paths, expected_ids):
+    checks = verification.checks_for_changed_files([{"path": path, "action": "modify"} for path in paths])
+    assert [check.check_id for check in checks] == expected_ids
+
+
+def _cache_test_worktree(tmp_path):
+    _, implementation = _registered_worktree(tmp_path)
+    (implementation / "cache_target.py").write_text("VALUE = 42\n", encoding="utf-8")
+    (implementation / "test_cache_target.py").write_text(
+        "import os\nimport cache_target\n\ndef test_value():\n"
+        "    assert cache_target.VALUE == 42\n"
+        "    assert os.environ['PYTHONDONTWRITEBYTECODE'] == '1'\n",
+        encoding="utf-8",
+    )
+    return implementation
+
+
+def test_pytest_cache_artifacts_do_not_invalidate_worktree_identity(tmp_path, monkeypatch):
+    implementation = _cache_test_worktree(tmp_path)
+    monkeypatch.setattr(verification, "DEFAULT_CHECKS", (
+        VerificationCheck(
+            "python.tests", "Python tests",
+            (sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"), ".", 30,
+        ),
+    ))
+
+    results = run_verification(implementation, [{"path": "tests/test_cache_target.py"}])
+
+    assert [result.status for result in results] == ["passed"]
+    assert not (implementation / ".pytest_cache").exists()
+    assert "invalidated" not in results[0].stdout
+
+
+def test_python_bytecode_artifacts_do_not_invalidate_worktree_identity(tmp_path, monkeypatch):
+    implementation = _cache_test_worktree(tmp_path)
+    monkeypatch.setattr(verification, "DEFAULT_CHECKS", (
+        VerificationCheck(
+            "python.tests", "Python tests",
+            (sys.executable, "-c", "import os; assert os.environ['PYTHONDONTWRITEBYTECODE'] == '1'; import cache_target"),
+            ".", 30,
+        ),
+    ))
+
+    results = run_verification(implementation, [{"path": "cache_target.py"}])
+
+    assert [result.status for result in results] == ["passed"]
+    assert not (implementation / "__pycache__").exists()
+    assert "invalidated" not in results[0].stdout
+
+
 def test_public_runner_rejects_command_injection_parameter():
     with pytest.raises(TypeError):
         run_verification("unused", checks=[_check(("arbitrary-command",))])
@@ -230,6 +287,17 @@ def test_secret_redaction_covers_database_url_and_common_tokens():
         "fake-bearer-token", fake_token, "AKIA1234567890ABCDEF",
     ):
         assert secret not in redacted
+
+
+def test_verification_diagnostic_is_redacted_and_bounded(monkeypatch):
+    monkeypatch.setenv("SERVICE_API_KEY", "diagnostic-secret-value")
+    error = OSError("verification failed with SERVICE_API_KEY=diagnostic-secret-value " + "x" * 2_000)
+
+    diagnostic = verification.safe_verification_diagnostic(error)
+
+    assert diagnostic.startswith("OSError:")
+    assert "diagnostic-secret-value" not in diagnostic
+    assert len(diagnostic) == 1_000
 
 
 def test_verification_result_stores_only_redacted_database_secret(tmp_path, monkeypatch):

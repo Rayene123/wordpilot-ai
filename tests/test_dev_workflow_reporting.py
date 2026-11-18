@@ -87,6 +87,17 @@ def test_missing_evidence_is_not_fabricated():
     assert any("missing" in failure for failure in report.failures)
 
 
+def test_documentation_only_report_can_pass_without_irrelevant_checks():
+    state = _state(checks=False)
+    state["diff_report"]["changed_files"] = [{"path": "docs/guide.md", "action": "modify"}]
+
+    report = build_final_report(state, required_check_ids=[])
+
+    assert report.overall_status == "passed"
+    assert report.verification_results == []
+    assert report.failures == []
+
+
 def test_approval_pending_is_distinct():
     state = _state(execution=None, diff=None, checks=False)
     state["decisions"] = []

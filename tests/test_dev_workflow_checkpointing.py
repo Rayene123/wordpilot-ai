@@ -20,16 +20,18 @@ from dev_workflow.schemas import (
     new_workflow_decision,
 )
 from dev_workflow.worktree import create_worktree
+from dev_workflow.verification import DEFAULT_CHECKS, checks_for_changed_files
 
 
-def _passing_checks(worktree):
+def _passing_checks(worktree, changed_files=None):
+    checks = DEFAULT_CHECKS if changed_files is None else checks_for_changed_files(changed_files)
     return [VerificationCheckResult(
-        check_id=check_id, display_name=check_id,
-        command_identity=["python", "-m", "pytest", "-q"] if check_id == "python.tests" else ["npm", "run", "typecheck"],
+        check_id=check.check_id, display_name=check.display_name,
+        command_identity=list(check.arguments),
         working_directory="worktree",
-        working_directory_identity="." if check_id == "python.tests" else "frontend",
+        working_directory_identity=check.working_directory,
         status="passed", exit_code=0, duration_seconds=0.1,
-    ) for check_id in ("python.tests", "frontend.typecheck")]
+    ) for check in checks]
 
 
 def _proposal(summary: str) -> TaskProposal:
@@ -118,9 +120,9 @@ def _recovery_dependencies(tmp_path, database):
     analyzer, implementer, worktree_creator, diff_collector, implementations = callbacks
     verification_calls = []
 
-    def verifier(worktree):
+    def verifier(worktree, changed_files):
         verification_calls.append(worktree)
-        return _passing_checks(worktree)
+        return _passing_checks(worktree, changed_files)
 
     state = new_workflow_state("Recover a checkpoint safely.", tmp_path)
     config = workflow_config(state["run_id"])
@@ -183,6 +185,7 @@ def test_sqlite_resume_does_not_repeat_completed_stages(
         else:
             assert len(implementations) == 1
             assert len(verification_calls) == 1
+            assert [item["check_id"] for item in snapshot.values["verification_results"]] == ["python.tests"]
             assert {item["status"] for item in snapshot.values["verification_results"]} == {"passed"}
 
     # Reopening the SQLite saver simulates a process restart at the node boundary.
@@ -195,6 +198,7 @@ def test_sqlite_resume_does_not_repeat_completed_stages(
     assert final_state["final_report"]["overall_status"] == "passed"
     assert final_state["final_report"]["implementation_status"] == "succeeded"
     assert final_state["final_report"]["diff_validation_status"] == "valid"
+    assert [item["check_id"] for item in final_state["final_report"]["verification_results"]] == ["python.tests"]
     assert {item["status"] for item in final_state["final_report"]["verification_results"]} == {"passed"}
     assert len(final_state["decisions"]) == 1
     assert len(implementations) == 1

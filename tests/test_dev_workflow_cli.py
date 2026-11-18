@@ -38,7 +38,7 @@ def test_status_reports_worktree_changed_files_and_check_evidence(monkeypatch, c
                        SimpleNamespace(action="create", path="test_average.py")],
         verification_results=[SimpleNamespace(
             check_id="python.tests", status="passed", exit_code=0,
-            command_identity=["python", "-m", "pytest", "-q"],
+            command_identity=["python", "-m", "pytest", "-q", "-p", "no:cacheprovider"],
         )],
         failures=[],
     )
@@ -59,7 +59,7 @@ def test_status_reports_worktree_changed_files_and_check_evidence(monkeypatch, c
     output = capsys.readouterr().out
     assert "Worktree: .devflow-worktrees/demo-run" in output
     assert "Changed files: create: average.py, create: test_average.py" in output
-    assert "python.tests: passed (exit 0); python -m pytest -q" in output
+    assert "python.tests: passed (exit 0); python -m pytest -q -p no:cacheprovider" in output
     assert "Report: passed; diff valid" in output
 
 

@@ -20,7 +20,10 @@ from .schemas import (
 )
 from .reporting import build_final_report
 from .state import DevWorkflowState
-from .verification import DEFAULT_CHECKS, run_verification
+from .verification import (
+    DEFAULT_CHECKS, checks_for_changed_files, run_verification,
+    safe_verification_diagnostic,
+)
 from .worktree import collect_worktree_diff, create_worktree, diff_identity, validate_registered_worktree
 
 Analyzer = Callable[..., tuple[CodexExecutionResult, TaskProposal | Mapping[str, Any] | None]]
@@ -61,7 +64,7 @@ def build_dev_workflow(
     implementer: Callable[..., CodexExecutionResult] = implement_approved_plan,
     worktree_creator: Callable[..., str] = create_worktree,
     diff_collector: Callable[..., DiffReport] = collect_worktree_diff,
-    verification_runner: Callable[[str], list[VerificationCheckResult]] = run_verification,
+    verification_runner: Callable[..., list[VerificationCheckResult]] = run_verification,
     checkpointer: BaseCheckpointSaver | None = None,
     max_plan_revisions: int = 2,
 ) -> Any:
@@ -200,31 +203,80 @@ def build_dev_workflow(
             return _fail("Approved implementation could not be completed safely.")
 
     def verification_node(state: DevWorkflowState) -> dict[str, Any]:
+        results: list[VerificationCheckResult] = []
+        errors = list(state.get("errors", []))
         try:
             worktree = validate_registered_worktree(state["repository_path"], state["worktree_path"])
+            diff_report = DiffReport.model_validate(state.get("diff_report"))
+            if diff_report.status != "valid":
+                raise ValueError("Verification requires a host-validated worktree diff.")
+            checks = checks_for_changed_files(diff_report.changed_files)
             before = diff_identity(worktree)
-            results = _validate_verification_results(verification_runner(worktree))
+            results = _validate_verification_results(
+                verification_runner(worktree, diff_report.changed_files), checks,
+            )
+        except Exception as exc:
+            errors.append("Host verification could not be completed safely: " + safe_verification_diagnostic(exc))
+            return {
+                "verification_results": [item.model_dump(mode="json") for item in results],
+                "errors": errors,
+            }
+        try:
             after = diff_identity(worktree)
             if before != after:
-                raise ValueError("Worktree changed while verification was running.")
-        except Exception:
-            return {"verification_results": [], "errors": [*state.get("errors", []), "Host verification could not be completed safely."]}
-        return {"verification_results": [item.model_dump(mode="json") for item in results]}
+                results = _invalidate_verification_results(
+                    results, "Worktree source diff changed while verification was running.",
+                )
+                errors.append("Host verification invalidated: worktree source diff changed while checks were running.")
+                try:
+                    diff_report = DiffReport.model_validate(
+                        diff_collector(worktree, TaskProposal.model_validate(state.get("proposal"))),
+                    )
+                except Exception as exc:
+                    diff_report = _invalidate_diff_evidence(
+                        diff_report,
+                        "Final worktree diff could not be revalidated: " + safe_verification_diagnostic(exc),
+                    )
+                return {
+                    "verification_results": [item.model_dump(mode="json") for item in results],
+                    "diff_report": diff_report.model_dump(mode="json"),
+                    "errors": errors,
+                }
+        except Exception as exc:
+            results = _invalidate_verification_results(
+                results, "Worktree source diff could not be revalidated after verification.",
+            )
+            errors.append("Host verification could not revalidate the worktree diff: " + safe_verification_diagnostic(exc))
+            diff_report = _invalidate_diff_evidence(
+                diff_report,
+                "Final worktree diff identity could not be verified after checks.",
+            )
+        return {
+            "verification_results": [item.model_dump(mode="json") for item in results],
+            "diff_report": diff_report.model_dump(mode="json"),
+            "errors": errors,
+        }
 
     def report_node(state: DevWorkflowState) -> dict[str, Any]:
         try:
             report_state: Mapping[str, Any] = state
-            if state.get("current_stage") == "implemented" or state.get("verification_results"):
+            if state.get("verification_results"):
                 try:
-                    verified = _validate_verification_results(state.get("verification_results", []))
+                    diff = DiffReport.model_validate(state.get("diff_report"))
+                    checks = checks_for_changed_files(diff.changed_files)
+                    verified = _validate_verification_results(state.get("verification_results", []), checks)
                     report_state = {**state, "verification_results": [item.model_dump(mode="json") for item in verified]}
-                except (TypeError, ValueError, ValidationError):
+                except (TypeError, ValueError, ValidationError) as exc:
                     report_state = {
                         **state, "verification_results": [],
-                        "errors": [*state.get("errors", []), "Verification evidence did not match host configuration."],
+                        "errors": [*state.get("errors", []),
+                                   "Verification evidence did not match host configuration: " + safe_verification_diagnostic(exc)],
                     }
             report = build_final_report(
-                report_state, required_check_ids=[check.check_id for check in DEFAULT_CHECKS],
+                report_state,
+                required_check_ids=[
+                    check.check_id for check in _required_verification_checks(report_state)
+                ],
             )
         except Exception:
             return {"current_stage": "failed", "final_status": "failed",
@@ -262,11 +314,46 @@ def build_dev_workflow(
     return builder.compile(checkpointer=saver)
 
 
-def _validate_verification_results(values: Any) -> list[VerificationCheckResult]:
+def _required_verification_checks(state: Mapping[str, Any]):
+    """Select report requirements only from the host-collected, validated diff."""
+    diff_value = state.get("diff_report")
+    if diff_value is None:
+        return ()
+    diff = DiffReport.model_validate(diff_value)
+    if diff.status != "valid":
+        return ()
+    return checks_for_changed_files(diff.changed_files)
+
+
+def _invalidate_verification_results(
+    results: list[VerificationCheckResult], reason: str,
+) -> list[VerificationCheckResult]:
+    """Retain completed evidence while ensuring source-mutated checks cannot pass."""
+    invalidated: list[VerificationCheckResult] = []
+    for result in results:
+        if result.status == "not_run":
+            invalidated.append(result)
+            continue
+        detail = (result.stderr + ("\n" if result.stderr else "") + reason)[:8_192]
+        invalidated.append(result.model_copy(update={"status": "failed", "stderr": detail}))
+    return invalidated
+
+
+def _invalidate_diff_evidence(diff: DiffReport, reason: str) -> DiffReport:
+    """Do not retain a valid-diff claim when the final worktree cannot be confirmed."""
+    return diff.model_copy(update={
+        "status": "invalid",
+        "errors": [*diff.errors, reason],
+    })
+
+
+def _validate_verification_results(
+    values: Any, checks=DEFAULT_CHECKS,
+) -> list[VerificationCheckResult]:
     """Require exactly one matching result for every configured host check."""
     if not isinstance(values, (list, tuple)):
         raise ValueError("Verification results must be a sequence.")
-    expected = {check.check_id: check for check in DEFAULT_CHECKS}
+    expected = {check.check_id: check for check in checks}
     actual: dict[str, VerificationCheckResult] = {}
     for value in values:
         result = VerificationCheckResult.model_validate(value)
@@ -282,7 +369,7 @@ def _validate_verification_results(values: Any) -> list[VerificationCheckResult]
         actual[result.check_id] = result
     if set(actual) != set(expected):
         raise ValueError("Verification did not return every configured host check.")
-    return [actual[check.check_id] for check in DEFAULT_CHECKS]
+    return [actual[check.check_id] for check in checks]
 
 
 def _fail(message: str, **extra: Any) -> dict[str, Any]:

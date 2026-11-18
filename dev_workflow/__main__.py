@@ -16,8 +16,8 @@ from . import workflow_config
 from .checkpointing import ApprovalResumeError, resume_pending_approval
 from .codex_cli import resolve_codex_executable
 from .preflight import run_live_codex_preflight
-from .schemas import FinalReport, TaskProposal, new_workflow_decision
-from .verification import DEFAULT_CHECKS, run_verification
+from .schemas import DiffReport, FinalReport, TaskProposal, new_workflow_decision
+from .verification import checks_for_changed_files, run_verification
 
 ROOT = Path.cwd().resolve()
 DATABASE = ROOT / ".devflow" / "checkpoints.sqlite3"
@@ -284,15 +284,26 @@ def run_checks(graph: Any) -> None:
     run = _select_run(candidates)
     if not run:
         return
+    try:
+        diff = DiffReport.model_validate(run[1].get("diff_report"))
+        if diff.status != "valid":
+            raise ValueError("The saved worktree diff is not valid.")
+        checks = checks_for_changed_files(diff.changed_files)
+    except (TypeError, ValueError) as exc:
+        _say(f"Verification could not use the saved host diff: {exc}")
+        return
     worktree = run[1]["worktree_path"]
+    if not checks:
+        _say("No configured host checks are required for these changes.")
+        return
     _say("Configured checks:")
-    for check in DEFAULT_CHECKS:
+    for check in checks:
         _say(f"  • {check.display_name}: {' '.join(check.arguments)} (in {check.working_directory}, timeout {check.timeout_seconds}s)")
     if _ask("Run these checks now in the registered worktree? [y/N] ").casefold() != "y":
         _say("Verification cancelled.")
         return
     try:
-        for result in run_verification(worktree):
+        for result in run_verification(worktree, diff.changed_files):
             _say(f"{result.display_name}: {result.status} (exit {result.exit_code}, {result.duration_seconds:.1f}s)")
     except (OSError, ValueError, RuntimeError):
         _say("Verification could not run safely. Check the worktree registration and dependencies.")

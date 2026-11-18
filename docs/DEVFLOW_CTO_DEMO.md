@@ -1,6 +1,6 @@
 # CTO demo: DevFlow Python source generation
 
-This demo uses the existing interactive DevFlow CLI to ask Codex to create `average.py` and `test_average.py` in a detached Git worktree. The host checkpoints a validated proposal and waits for a human decision. Only approval continues into implementation. The existing diff validator, fixed verification checks, SQLite checkpoint, and report are used.
+This demo uses the existing interactive DevFlow CLI to ask Codex to create `average.py` and `test_average.py` in a detached Git worktree. The host checkpoints a validated proposal and waits for a human decision. Only approval continues into implementation. The existing diff validator, change-selected host verification checks, SQLite checkpoint, and report are used.
 
 ## Windows prerequisites
 
@@ -71,16 +71,17 @@ Untracked files are included in DevFlow's host-collected diff report even though
 
 ## Verification and expected output
 
-The workflow runs its fixed host checks in the worktree:
+Because this task changes Python files only, the workflow runs the host Python check in the worktree:
 
 ```text
-python -m pytest -q
-npm run typecheck   # working directory: frontend
+python -m pytest -q -p no:cacheprovider
 ```
+
+The Python verification process also sets `PYTHONDONTWRITEBYTECODE=1`; pytest cache and bytecode artifacts therefore do not change the worktree identity. Frontend typechecking is required only when the host-validated diff contains files under `frontend/`. Mixed Python and frontend changes run both checks; documentation-only changes run no unrelated suite.
 
 The final report shows the proposal decision, implementation result, changed files, diff status, each check's command/status/exit code, failures, and overall status. A fully passing run reports `passed`; failed or unavailable checks remain visibly failed. The Python check runs the configured repository test suite, including any generated `test_average.py` tests.
 
-Known limitation: `frontend/node_modules` is ignored and is not copied into detached Git worktrees. The current graph has no dependency-install stage between implementation and verification. Therefore `npm ci --prefix frontend` in the main checkout does not provision the detached worktree. On a fresh checkout, the frontend typecheck may fail because dependencies are absent there; the report must show that failure and overall status must not be described as successful. The demo does not weaken verification or add a package-install mechanism to hide this limitation.
+Known limitation for frontend tasks: `frontend/node_modules` is ignored and is not copied into detached Git worktrees. The current graph has no dependency-install stage between implementation and verification. Therefore `npm ci --prefix frontend` in the main checkout does not provision the detached worktree. On a fresh checkout, frontend typechecking may fail because dependencies are absent there; the report must show that failure and overall status must not be described as successful. The demo does not weaken verification or add a package-install mechanism to hide this limitation.
 
 ## Windows execution-policy and troubleshooting
 

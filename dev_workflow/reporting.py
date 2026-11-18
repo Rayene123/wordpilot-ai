@@ -65,7 +65,7 @@ def build_final_report(
         elif result.status == "not_run":
             failures.append(f"Verification check '{result.check_id}' was not run.")
 
-    complete_checks = bool(required) and all(
+    complete_checks = all(
         check_id in recorded and recorded[check_id].status == "passed" for check_id in required
     )
     success = (

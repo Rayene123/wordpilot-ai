@@ -145,6 +145,9 @@ def test_success_uses_read_only_cli_stdin_and_explicit_working_directory(monkeyp
     assert "pathlib" in prompt and "os.walk" in prompt
     assert "rg" not in prompt
     assert "read-only" in prompt
+    assert "backend/api.py" in prompt
+    assert "# existing fixture" in prompt
+    assert "host-collected repository inspection evidence" in prompt
 
 
 def test_analysis_prompt_is_sent_as_exact_utf8_bytes_for_unicode_text(monkeypatch, tmp_path):
@@ -297,14 +300,41 @@ def test_reanalysis_includes_human_feedback_and_previous_proposal(monkeypatch, t
     assert "Narrow the scope." in prompt
     assert "Earlier plan" in prompt
     assert "do not run project commands or edit files" in prompt
-    assert "On Windows, list relevant repository files with `rg --files`" in prompt
-    assert "read or search file content with `rg -n` or `rg -n -C`" in prompt
-    for blocked_command in ("Get-Content", "Get-ChildItem", "Select-String"):
-        assert blocked_command in prompt
-    assert "shell command workarounds for repository inspection" in prompt
+    assert "pathlib, os.walk, and Python file reading/searching" in prompt
+    assert "do not depend on external search binaries" in prompt
+    assert "exclude .git, .devflow-worktrees" in prompt.casefold()
+    assert "keep inspection read-only" in prompt.casefold()
     assert "Implementation may occur only after explicit human approval" in prompt
     assert "Host-controlled verification may run after implementation" in prompt
     assert "Do not say that read-only analysis restrictions prohibit later host verification" in prompt
+
+
+def test_repository_inspection_failure_returns_reason_without_running_codex(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path, lambda *_args, **_kwargs: pytest.fail("Codex must not run"))
+    def fail_walk(_path, **_kwargs):
+        raise PermissionError("inspection access denied")
+    monkeypatch.setattr(codex_cli.os, "walk", fail_walk)
+
+    result, proposal = codex_cli.analyze_task("Task", tmp_path)
+
+    assert result.status == "failed"
+    assert result.error == "Repository inspection failed: PermissionError: inspection access denied"
+    assert proposal is None
+    assert result.parsed_result is None
+
+
+def test_placeholder_path_is_rejected_even_when_schema_is_valid(monkeypatch, tmp_path):
+    raw = json.loads(_proposal_json())
+    raw["expected_files"][0]["path"] = "backend/placeholder.py"
+    raw["file_scope"]["included_files"] = ["backend/placeholder.py"]
+    fake_run, _ = _fake_run_factory(message=json.dumps(raw))
+    _setup(monkeypatch, tmp_path, fake_run)
+
+    result, proposal = codex_cli.analyze_task("Task", tmp_path)
+
+    assert result.status == "failed"
+    assert proposal is None
+    assert "placeholder paths are not allowed" in result.error
 
 
 def test_implementation_uses_workspace_write_only_in_supplied_worktree(monkeypatch, tmp_path):

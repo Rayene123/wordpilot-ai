@@ -1,1 +1,7 @@
-In the session notes, replace the sentence "Proposed focus: Review the client's experience of using the rehearsed request at work, and continue developing a consistent evening routine." with "Proposed focus: Review how the client used the rehearsed request at work and continue developing a consistent evening routine." Then insert this paragraph immediately after it: "Record any additional topics the client would like to revisit at the next session." Preserve all other content and formatting. Do not change any other text, styles, tables, or document elements.
+First insert this paragraph immediately after the paragraph containing the current sentence: "Proposed focus: Review the client's experience of using the rehearsed request at work, and continue developing a consistent evening routine."
+
+"Record any additional topics the client would like to revisit at the next session."
+
+Then replace the current sentence with: "Proposed focus: Review how the client used the rehearsed request at work and continue developing a consistent evening routine."
+
+Preserve all other content and formatting.

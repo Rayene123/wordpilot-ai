@@ -14,6 +14,7 @@ from dev_workflow.schemas import (
     CodexExecutionResult, DiffReport, TaskProposal, VerificationCheckResult,
     new_workflow_decision, proposal_fingerprint,
 )
+from dev_workflow.verification import DEFAULT_CHECKS, checks_for_changed_files
 from dev_workflow.worktree import create_worktree
 
 
@@ -46,19 +47,20 @@ def _execution(status="succeeded", error=None):
     )
 
 
-def _passing_checks(worktree):
+def _passing_checks(worktree, changed_files=None):
+    checks = DEFAULT_CHECKS if changed_files is None else checks_for_changed_files(changed_files)
     return [VerificationCheckResult(
-        check_id=check_id, display_name=check_id,
-        command_identity=["python", "-m", "pytest", "-q"] if check_id == "python.tests" else ["npm", "run", "typecheck"],
+        check_id=check.check_id, display_name=check.display_name,
+        command_identity=list(check.arguments),
         working_directory="worktree",
-        working_directory_identity="." if check_id == "python.tests" else "frontend",
+        working_directory_identity=check.working_directory,
         status="passed", exit_code=0, duration_seconds=0.1,
-    ) for check_id in ("python.tests", "frontend.typecheck")]
+    ) for check in checks]
 
 
 def _setup(tmp_path, *, proposals=None, execution=None, implementation_status="succeeded",
            diff_status="valid", max_revisions=2, verification_runner=_passing_checks,
-           worktree_factory=None):
+           worktree_factory=None, changed_files=None):
     calls, implementations, worktrees, diffs = [], [], [], []
     proposals = proposals or [_proposal()]
     for candidate in proposals:
@@ -98,7 +100,7 @@ def _setup(tmp_path, *, proposals=None, execution=None, implementation_status="s
         return DiffReport(status=diff_status, changed_files=[
             {"path": "backend/api.py", "action": "modify"},
             {"path": "tests/test_api.py", "action": "modify"},
-        ] if diff_status != "not_collected" else [],
+        ] if changed_files is None and diff_status != "not_collected" else (changed_files or []),
             errors=["Scope validation failed."] if diff_status == "invalid" else [],
             diff="+ health detail", worktree_path=worktree)
 
@@ -188,7 +190,7 @@ def test_implementation_failure_is_reported_without_verification(tmp_path):
     calls = []
     graph, state, config, *_ = _setup(
         tmp_path, implementation_status="failed",
-        verification_runner=lambda worktree: calls.append(worktree) or _passing_checks(worktree),
+        verification_runner=lambda worktree, changes: calls.append(worktree) or _passing_checks(worktree, changes),
     )
     proposal_result, _ = _pause(graph, state, config)
     done = graph.invoke(Command(resume=_decision(proposal_result)), config)
@@ -201,7 +203,7 @@ def test_invalid_diff_is_reported_without_verification(tmp_path):
     calls = []
     graph, state, config, *_ = _setup(
         tmp_path, diff_status="invalid",
-        verification_runner=lambda worktree: calls.append(worktree) or _passing_checks(worktree),
+        verification_runner=lambda worktree, changes: calls.append(worktree) or _passing_checks(worktree, changes),
     )
     proposal_result, _ = _pause(graph, state, config)
     done = graph.invoke(Command(resume=_decision(proposal_result)), config)
@@ -213,16 +215,15 @@ def test_invalid_diff_is_reported_without_verification(tmp_path):
 
 @pytest.mark.parametrize("check_status", ["failed", "timed_out"])
 def test_verification_failure_and_timeout_are_reported(tmp_path, check_status):
-    def runner(worktree):
+    def runner(worktree, changed_files):
         return [VerificationCheckResult(
-            check_id=check_id, display_name=check_id,
-            command_identity=["python", "-m", "pytest", "-q"] if check_id == "python.tests" else ["npm", "run", "typecheck"],
-            working_directory="worktree",
-            working_directory_identity="." if check_id == "python.tests" else "frontend",
+            check_id=check.check_id, display_name=check.check_id,
+            command_identity=list(check.arguments),
+            working_directory="worktree", working_directory_identity=check.working_directory,
             status=check_status,
             exit_code=1 if check_status == "failed" else None,
             duration_seconds=1,
-        ) for check_id in ("python.tests", "frontend.typecheck")]
+        ) for check in checks_for_changed_files(changed_files)]
 
     graph, state, config, *_ = _setup(tmp_path, verification_runner=runner)
     proposal_result, _ = _pause(graph, state, config)
@@ -232,8 +233,45 @@ def test_verification_failure_and_timeout_are_reported(tmp_path, check_status):
     assert {item["status"] for item in done["verification_results"]} == {check_status}
 
 
+def test_python_only_diff_runs_only_python_check(tmp_path):
+    graph, state, config, *_ = _setup(tmp_path)
+    proposal_result, _ = _pause(graph, state, config)
+    done = graph.invoke(Command(resume=_decision(proposal_result)), config)
+
+    assert done["final_status"] == "passed"
+    assert [item["check_id"] for item in done["verification_results"]] == ["python.tests"]
+
+
+@pytest.mark.parametrize(("changed_files", "expected_ids"), [
+    ([{"path": "frontend/src/page.tsx", "action": "modify"}], ["frontend.typecheck"]),
+    ([{"path": "backend/api.py", "action": "modify"},
+      {"path": "frontend/src/page.tsx", "action": "modify"}],
+     ["python.tests", "frontend.typecheck"]),
+])
+def test_frontend_and_mixed_diffs_require_the_matching_checks(tmp_path, changed_files, expected_ids):
+    graph, state, config, *_ = _setup(tmp_path, changed_files=changed_files)
+    proposal_result, _ = _pause(graph, state, config)
+    done = graph.invoke(Command(resume=_decision(proposal_result)), config)
+
+    assert done["final_status"] == "passed"
+    assert [item["check_id"] for item in done["verification_results"]] == expected_ids
+
+
+def test_documentation_only_diff_needs_no_test_suites(tmp_path):
+    graph, state, config, *_ = _setup(
+        tmp_path, changed_files=[{"path": "docs/usage.md", "action": "modify"}],
+        verification_runner=lambda _worktree, _changes: [],
+    )
+    proposal_result, _ = _pause(graph, state, config)
+    done = graph.invoke(Command(resume=_decision(proposal_result)), config)
+
+    assert done["final_status"] == "passed"
+    assert done["verification_results"] == []
+    assert done["final_report"]["verification_results"] == []
+
+
 def test_missing_verification_evidence_cannot_pass(tmp_path):
-    graph, state, config, *_ = _setup(tmp_path, verification_runner=lambda worktree: [])
+    graph, state, config, *_ = _setup(tmp_path, verification_runner=lambda worktree, changes: [])
     proposal_result, _ = _pause(graph, state, config)
     done = graph.invoke(Command(resume=_decision(proposal_result)), config)
     assert done["final_status"] == "failed"
@@ -243,7 +281,7 @@ def test_missing_verification_evidence_cannot_pass(tmp_path):
 
 @pytest.mark.parametrize("mismatch", ["command", "working_directory", "working_directory_identity", "missing", "unexpected"])
 def test_mismatched_host_verification_evidence_cannot_pass(tmp_path, mismatch):
-    results = _passing_checks("unused")
+    results = _passing_checks("unused", [{"path": "backend/api.py"}])
     if mismatch == "command":
         results[0] = results[0].model_copy(update={"command_identity": ["other-command"]})
     elif mismatch == "working_directory":
@@ -254,7 +292,7 @@ def test_mismatched_host_verification_evidence_cannot_pass(tmp_path, mismatch):
         results.pop()
     else:
         results[0] = results[0].model_copy(update={"check_id": "unexpected.check"})
-    graph, state, config, *_ = _setup(tmp_path, verification_runner=lambda worktree: results)
+    graph, state, config, *_ = _setup(tmp_path, verification_runner=lambda worktree, changes: results)
     proposal_result, _ = _pause(graph, state, config)
     done = graph.invoke(Command(resume=_decision(proposal_result)), config)
     assert done["final_status"] == "failed"
@@ -262,15 +300,52 @@ def test_mismatched_host_verification_evidence_cannot_pass(tmp_path, mismatch):
 
 
 def test_worktree_change_during_verification_cannot_pass(tmp_path):
-    def mutate_during_verification(worktree):
+    def mutate_during_verification(worktree, changed_files):
         (Path(worktree) / "verification-side-effect.txt").write_text("changed", encoding="utf-8")
-        return _passing_checks(worktree)
+        return _passing_checks(worktree, changed_files)
 
     graph, state, config, *_ = _setup(tmp_path, verification_runner=mutate_during_verification)
     proposal_result, _ = _pause(graph, state, config)
     done = graph.invoke(Command(resume=_decision(proposal_result)), config)
     assert done["final_status"] == "failed"
     assert done["final_report"]["overall_status"] == "failed"
+    assert [item["status"] for item in done["verification_results"]] == ["failed"]
+    assert "source diff changed" in done["verification_results"][0]["stderr"]
+
+
+def test_results_survive_post_verification_identity_failure(tmp_path, monkeypatch):
+    import dev_workflow.graph as workflow_graph
+
+    graph, state, config, *_ = _setup(tmp_path)
+    identities = iter(["before"])
+    def identity(_worktree):
+        try:
+            return next(identities)
+        except StopIteration as exc:
+            raise OSError("diff storage unavailable") from exc
+    monkeypatch.setattr(workflow_graph, "diff_identity", identity)
+    proposal_result, _ = _pause(graph, state, config)
+    done = graph.invoke(Command(resume=_decision(proposal_result)), config)
+
+    assert done["final_status"] == "failed"
+    assert [item["check_id"] for item in done["verification_results"]] == ["python.tests"]
+    assert done["verification_results"][0]["status"] == "failed"
+    assert any("diff storage unavailable" in error for error in done["errors"])
+
+
+def test_verification_exception_reason_is_saved_without_fabricated_results(tmp_path):
+    def fail_verification(_worktree, _changed_files):
+        raise OSError("verification runner unavailable")
+
+    graph, state, config, *_ = _setup(tmp_path, verification_runner=fail_verification)
+    proposal_result, _ = _pause(graph, state, config)
+    done = graph.invoke(Command(resume=_decision(proposal_result)), config)
+
+    assert done["final_status"] == "failed"
+    assert done["verification_results"] == []
+    assert any("OSError: verification runner unavailable" in error for error in done["errors"])
+    assert any("Required verification results are missing: python.tests." in failure
+               for failure in done["final_report"]["failures"])
 
 
 def test_requested_changes_reanalyze_and_invalidate_previous_approval(tmp_path):
@@ -281,6 +356,7 @@ def test_requested_changes_reanalyze_and_invalidate_previous_approval(tmp_path):
     changed = graph.invoke(Command(resume=_decision(first, "request_changes", "Add a response compatibility test.")), config)
     assert changed["final_status"] == "awaiting_approval"
     assert len(calls) == 2
+    assert calls[1][0] == state["task_description"]
     assert calls[1][2] == "Add a response compatibility test."
     assert calls[1][3] == first["proposal"]
     assert changed["proposal_fingerprint"] != first_fingerprint

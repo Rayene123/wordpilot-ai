@@ -408,11 +408,10 @@ class FinalReport(BaseModel):
         if self.overall_status == "passed" and (
             self.implementation_status != "succeeded"
             or self.diff_validation_status != "valid"
-            or not self.verification_results
             or any(result.status != "passed" for result in self.verification_results)
             or self.failures
         ):
-            raise ValueError("A passing report requires successful implementation, valid diff, and passing checks.")
+            raise ValueError("A passing report requires successful implementation, a valid diff, and no failed or missing required checks.")
         if self.overall_status == "rejected" and self.implementation_status != "not_run":
             raise ValueError("A rejected report must not claim implementation ran.")
         return self

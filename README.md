@@ -138,14 +138,30 @@ From a clean clone, install Python 3.12, Git, and Codex CLI, sign in with `codex
 ```powershell
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-py -3.12 -m dev_workflow
+.\.venv\Scripts\python.exe -m dev_workflow
 ```
 
 On Linux, create and install into a Python 3.12 virtual environment (`python3.12 -m venv .venv`, `. .venv/bin/activate`, `python -m pip install -r requirements.txt`) and launch with `python -m dev_workflow`. If PowerShell blocks activation, invoke `.venv\Scripts\python.exe` directly; activation is optional. On Windows, set `DEVFLOW_WINDOWS_SANDBOX` to an allowed backend before implementation, as described above.
 
-The menu provides these actions: `1` check environment, `2` start a task, `3` review a pending approval, `4` resume a saved workflow, `5` inspect status/report, `6` run configured verification in a registered implementation worktree, and `7` exit. The approval screen shows the exact proposal and file scope before accepting approve, reject, or change requests. Implementation starts only after approval and runs in the registered detached worktree. Verification checks are fixed by the host (`python -m pytest -q` and `npm run typecheck`); a manual verification rerun is displayed in the terminal and does not replace the workflow's checkpointed report evidence.
+#### Start from a fresh Windows CMD terminal
 
-End-to-end code-generation demo: launch `py -3.12 -m dev_workflow`, choose `2`, and enter `Create hello.py that prints Hello, DevFlow!`. Review the proposed file and scope, then choose `1` to approve. DevFlow implements only after approval in `.devflow-worktrees/<run-id>`, validates the resulting diff, runs its configured checks, and prints the final report. If the session is interrupted, use menu item `4` to select the saved run; no UUID copying is needed.
+After creating `.venv` and installing the repository dependencies as described above, open Command Prompt and run the following from the project root. Replace `26.xxxx.xxxxx` with the versioned folder name shown by the `dir` command; the VS Code Codex extension updates this folder when its version changes.
+
+```cmd
+cd /d C:\Users\rayen\Desktop\wordpilot-ai
+dir /b "%USERPROFILE%\.vscode\extensions\openai.chatgpt-*-win32-x64"
+set "DEVFLOW_WINDOWS_SANDBOX=elevated"
+set "CODEX_CLI_PATH=%USERPROFILE%\.vscode\extensions\openai.chatgpt-26.xxxx.xxxxx-win32-x64\bin\windows-x86_64\codex.exe"
+if exist "%CODEX_CLI_PATH%" (echo Codex executable found) else (echo Codex executable not found)
+"%CODEX_CLI_PATH%" login status
+.venv\Scripts\python.exe -m dev_workflow
+```
+
+Check that the existence command reports `Codex executable found` and that `login status` confirms authentication; otherwise correct the path or sign in using that executable before continuing. Set `DEVFLOW_WINDOWS_SANDBOX=elevated` only when the host supports and permits that backend, as described in the Windows sandbox guidance above. CMD `set` values apply only to the current terminal session, so repeat both `set` commands in every new Command Prompt window. When DevFlow opens, choose **option 1** and pass every live Codex preflight check; **option 2** remains blocked until the environment check reports success. The preflight checks CLI availability, authentication, read-only execution, and workspace-write execution.
+
+The menu provides these actions: `1` check environment, `2` start a task, `3` review a pending approval, `4` resume a saved workflow, `5` inspect status/report, `6` run configured verification in a registered implementation worktree, and `7` exit. The approval screen shows the exact proposal and file scope before accepting approve, reject, or change requests. Implementation starts only after approval and runs in the registered detached worktree. Verification uses fixed host commands selected from the host-validated changed files: Python changes run `python -m pytest -q -p no:cacheprovider` with bytecode writing disabled; `frontend/` changes run `npm run typecheck`; changes in both areas run both. Documentation-only changes do not run unrelated suites. Other source or configuration changes retain the full configured suite. A manual verification rerun is displayed in the terminal and does not replace the workflow's checkpointed report evidence.
+
+End-to-end code-generation demo: launch `.venv\Scripts\python.exe -m dev_workflow` (or the CMD/PowerShell launch command above), choose `2`, and enter `Create hello.py that prints Hello, DevFlow!`. Review the proposed file and scope, then choose `1` to approve. DevFlow implements only after approval in `.devflow-worktrees/<run-id>`, validates the resulting diff, runs its configured checks, and prints the final report. If the session is interrupted, use menu item `4` to select the saved run; no UUID copying is needed.
 
 The repository has no published OS support matrix, and a clean clone has not been verified across Windows, Linux, and macOS. Treat the commands above as setup guidance, not a cross-platform support claim. Windows sandbox behavior depends on the host Codex sandbox backend and managed execution policy; inspect and configure these on the evaluator's machine. DevFlow does not change those settings. Linux and macOS operation, including sandbox capabilities, must be verified on those hosts before claiming support.
 
@@ -200,14 +216,13 @@ python -c "from dev_workflow.preflight import run_write_capability_preflight; im
 
 This command invokes Codex CLI in a disposable worktree and writes/removes its unique marker there. Inspect the reported evidence path. If it fails on Windows, investigate the host-controlled Codex `windows.sandbox` backend selection and any managed execution policy; DevFlow does not alter either setting. This preflight is not a task-graph stage and is not invoked automatically.
 
-After implementation passes diff validation, DevFlow runs its fixed, host-defined verification checks in the worktree:
+After implementation passes diff validation, DevFlow selects fixed, host-defined verification checks from the changed paths in the validated diff. For Python changes, the command is:
 
 ```text
-python -m pytest -q
-npm run typecheck
+python -m pytest -q -p no:cacheprovider
 ```
 
-The frontend command runs from `frontend/`. Its dependencies must be available in the detached worktree; `node_modules` is not part of the Git worktree, and DevFlow does not install packages as part of its checks. The host must provision dependencies for the worktree before typechecking; the current graph has no package-install hook between implementation and verification. Verification evidence is tied to the worktree diff. If a process is interrupted before a verification result is checkpointed, verification may be retried on resume. Completed, checkpointed stages are resumed from their saved state and are not unnecessarily repeated. The deterministic final report records implementation, diff-validation, and verification outcomes, plus failures, remaining risks, and evidence references.
+For changes under `frontend/`, DevFlow runs `npm run typecheck` from `frontend/`; changes to both Python and frontend files run both checks. Documentation-only changes require no test suite. The Python test process uses `PYTHONDONTWRITEBYTECODE=1` and disables pytest's cache provider so routine test artifacts do not invalidate worktree identity checks. Genuine source changes during verification still invalidate the affected checks. Frontend dependencies must be available in the detached worktree; `node_modules` is not part of the Git worktree, and DevFlow does not install packages as part of its checks. The host must provision dependencies for the worktree before typechecking; the current graph has no package-install hook between implementation and verification. Verification evidence is tied to the worktree diff. If a process is interrupted before a verification result is checkpointed, verification may be retried on resume. Completed, checkpointed stages are resumed from their saved state and are not unnecessarily repeated. The deterministic final report records implementation, diff-validation, and verification outcomes, plus failures, remaining risks, and evidence references.
 
 Run the DevFlow tests from the repository root:
 

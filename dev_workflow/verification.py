@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import time
 from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from .schemas import VerificationCheckResult
@@ -49,7 +50,8 @@ class VerificationCheck:
 # supplies command arguments. Applications may pass their own host-owned tuple.
 DEFAULT_CHECKS = (
     VerificationCheck(
-        "python.tests", "Python test suite", ("python", "-m", "pytest", "-q"),
+        "python.tests", "Python test suite",
+        ("python", "-m", "pytest", "-q", "-p", "no:cacheprovider"),
         ".", 600,
     ),
     VerificationCheck(
@@ -57,6 +59,52 @@ DEFAULT_CHECKS = (
         "frontend", 300,
     ),
 )
+
+_DOCUMENTATION_SUFFIXES = frozenset({".md", ".markdown", ".rst", ".txt", ".adoc"})
+_DOCUMENTATION_NAMES = frozenset({"license", "notice", "changelog", "changes"})
+
+
+def checks_for_changed_files(changed_files: Sequence[object]) -> tuple[VerificationCheck, ...]:
+    """Select only host-defined checks relevant to validated changed paths."""
+    paths: list[str] = []
+    for item in changed_files:
+        if isinstance(item, Mapping):
+            path = item.get("path")
+        else:
+            path = getattr(item, "path", None)
+        if not isinstance(path, str) or not path.strip():
+            raise ValueError("Validated changed-file evidence contains an invalid path.")
+        paths.append(path.replace("\\", "/").casefold())
+
+    if not paths:
+        return ()
+    python_changed = any(path.endswith(".py") for path in paths)
+    frontend_changed = any(path.startswith("frontend/") for path in paths)
+    known_path = python_changed or frontend_changed
+    def is_documentation(path: str) -> bool:
+        name = Path(path).name
+        text_configuration = (
+            Path(path).suffix == ".txt"
+            and name.startswith(("requirements", "constraints"))
+        )
+        return (
+            path.startswith("docs/")
+            or (Path(path).suffix in _DOCUMENTATION_SUFFIXES and not text_configuration)
+            or name.split(".", 1)[0] in _DOCUMENTATION_NAMES
+        )
+
+    documentation_only = all(is_documentation(path) for path in paths)
+    if not known_path and documentation_only:
+        return ()
+    if not known_path:
+        # Unclassified source/configuration changes retain the full host suite.
+        return DEFAULT_CHECKS
+    selected_ids = set()
+    if python_changed:
+        selected_ids.add("python.tests")
+    if frontend_changed:
+        selected_ids.add("frontend.typecheck")
+    return tuple(check for check in DEFAULT_CHECKS if check.check_id in selected_ids)
 
 
 def _safe_worktree(path: str | Path) -> Path:
@@ -129,6 +177,12 @@ def _redact(text: str, env: dict[str, str]) -> str:
     return text
 
 
+def safe_verification_diagnostic(error: Exception) -> str:
+    """Return a bounded, redacted error diagnostic suitable for checkpoint state."""
+    detail = str(error) or type(error).__name__
+    return _redact(f"{type(error).__name__}: {detail}", dict(os.environ))[:1_000]
+
+
 def _read_evidence(stream, env: dict[str, str]) -> tuple[str, bool]:
     stream.seek(0, os.SEEK_END)
     size = stream.tell()
@@ -189,9 +243,14 @@ def _process_arguments(check: VerificationCheck) -> list[str]:
 
 def run_verification(
     worktree_path: str | Path,
+    changed_files: Sequence[object] | None = None,
 ) -> list[VerificationCheckResult]:
-    """Run only the fixed host checks and bind them to one stable worktree diff."""
-    return _run_configured_checks(worktree_path, DEFAULT_CHECKS)
+    """Run host-defined checks selected from validated changed-file evidence."""
+    checks = DEFAULT_CHECKS if changed_files is None else checks_for_changed_files(changed_files)
+    if not checks:
+        _safe_worktree(worktree_path)
+        return []
+    return _run_configured_checks(worktree_path, checks)
 
 
 def _run_configured_checks(
@@ -222,10 +281,13 @@ def _run_configured_checks(
         out_truncated = err_truncated = False
         try:
             cwd = _working_directory(worktree, check.working_directory)
+            check_env = dict(env)
+            if check.check_id == "python.tests":
+                check_env["PYTHONDONTWRITEBYTECODE"] = "1"
             with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
                 try:
                     completed = subprocess.run(
-                        _process_arguments(check), cwd=cwd, env=env, stdout=stdout_file,
+                        _process_arguments(check), cwd=cwd, env=check_env, stdout=stdout_file,
                         stderr=stderr_file, timeout=check.timeout_seconds,
                         check=False, shell=False,
                     )
@@ -246,16 +308,20 @@ def _run_configured_checks(
                                stdout=out_text, stderr=err_text,
                                stdout_truncated=out_truncated, stderr_truncated=err_truncated))
         failed = status in {"failed", "timed_out"}
+    diff_validation_error: Exception | None = None
     try:
         after = worktree_tools.diff_identity(worktree)
-    except (OSError, UnicodeError, RuntimeError, ValueError, subprocess.SubprocessError):
+    except (OSError, UnicodeError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
         after = ""
+        diff_validation_error = exc
     if before != after:
         executed = [index for index, result in enumerate(results) if result.status != "not_run"]
         if executed:
             index = executed[-1]
             last = results[index]
             marker = "\n[Verification invalidated: worktree diff changed.]"
+            if diff_validation_error is not None:
+                marker += " " + safe_verification_diagnostic(diff_validation_error)
             combined_stdout = last.stdout + marker
             invalidated_stdout = combined_stdout[:MAX_EVIDENCE_BYTES]
             for executed_index in executed:
@@ -270,8 +336,11 @@ def _run_configured_checks(
                     stderr_truncated=item.stderr_truncated,
                 )
         elif checks:
+            reason = "Verification invalidated: worktree diff changed before execution."
+            if diff_validation_error is not None:
+                reason += " " + safe_verification_diagnostic(diff_validation_error)
             results[0] = _result(
                 checks[0], "failed",
-                stdout="Verification invalidated: worktree diff changed before execution.",
+                stdout=reason,
             )
     return results

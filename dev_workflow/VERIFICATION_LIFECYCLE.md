@@ -28,6 +28,8 @@ The adapter is responsible for invoking Codex with controlled arguments, a confi
 
 Analysis uses the read-only sandbox. The returned proposal is validated against the strict `TaskProposal` schema before it can proceed.
 
+Repository inspection guidance uses Python standard-library facilities such as `pathlib`, `os.walk`, and bounded file reads and searches. It does not depend on `rg`, Unix utilities, or PowerShell commands. Inspection excludes version-control metadata, DevFlow worktrees, virtual environments, caches, dependencies, and generated build output. Expected file actions are checked against the repository before a proposal proceeds.
+
 A successful process exit alone is not sufficient evidence of successful analysis. Execution-policy or sandbox refusal evidence must cause analysis to fail closed, even if structured proposal output is returned.
 
 The analysis stage does not authorize repository modifications.
@@ -129,7 +131,7 @@ A valid implementation must produce a non-empty diff matching the approved propo
 
 Verification is performed by host-configured checks, not commands selected by the model.
 
-The public verification entry point runs the configured default checks against the validated worktree.
+The public verification entry point selects from fixed host checks using only the changed paths in the host-validated `DiffReport`. Proposal text and model output cannot select or skip commands.
 
 Each check has:
 - A fixed check ID.
@@ -142,6 +144,15 @@ Processes are launched with `shell=False`. Output is bounded and sensitive value
 
 On Windows, the configured npm typecheck is resolved to a directly launchable Node.js/npm CLI process when the npm launcher is a `.cmd` file.
 
+The host selects checks by changed paths:
+- Python files require `python.tests`.
+- Files under `frontend/` require `frontend.typecheck`.
+- Changes in both areas require both checks.
+- Documentation-only changes under `docs/` or documentation file types require no unrelated test suite.
+- Other source or configuration changes retain the full configured suite.
+
+The Python check runs `python -m pytest -q -p no:cacheprovider` with `PYTHONDONTWRITEBYTECODE=1`. This prevents pytest cache and Python bytecode artifacts from appearing as worktree changes during verification.
+
 Verification records statuses including:
 - `passed`
 - `failed`
@@ -150,7 +161,7 @@ Verification records statuses including:
 
 When a check fails or times out, subsequent checks are marked `not_run`.
 
-DevFlow captures the worktree diff identity before and after verification. If the diff changes during verification, the executed verification results are invalidated and marked as failed.
+DevFlow captures the worktree diff identity before and after verification. Ignored files remain part of that identity; routine Python test artifacts are prevented by the Python check settings above. If the source diff changes or cannot be revalidated during verification, completed results are retained but marked failed, and the reason is recorded as a bounded, redacted workflow diagnostic. Genuine source modifications remain invalidating failures.
 
 ## 10. Final Reporting
 

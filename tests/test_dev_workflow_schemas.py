@@ -198,7 +198,12 @@ def test_final_report_requires_evidence_consistent_with_pass_status():
     assert report.model_dump(mode="json")["verification_results"][0]["check_id"] == "pytest"
     with pytest.raises(ValidationError):
         FinalReport.model_validate({**report.model_dump(), "unexpected": True})
+    docs_only = FinalReport.model_validate({
+        **report.model_dump(), "changed_files": [{"path": "docs/README.md", "action": "modify"}],
+        "verification_results": [],
+    })
+    assert docs_only.overall_status == "passed"
     with pytest.raises(ValidationError):
-        FinalReport.model_validate({**report.model_dump(), "verification_results": []})
+        FinalReport.model_validate({**report.model_dump(), "failures": ["A required check is missing."]})
     with pytest.raises(ValidationError):
         FinalReport.model_validate({**report.model_dump(), "evidence_references": ["../secret.txt"]})
