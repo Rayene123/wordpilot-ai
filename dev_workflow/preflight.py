@@ -32,6 +32,12 @@ from .worktree import collect_worktree_diff, create_worktree, remove_worktree
 
 
 def _preflight_proposal(marker_path: str, marker_contents: str) -> TaskProposal:
+    marker_without_final_lf = marker_contents[:-1] if marker_contents.endswith("\n") else marker_contents
+    powershell_marker_writer = (
+        f"[System.IO.File]::WriteAllText('{marker_path}', "
+        f"'{marker_without_final_lf}' + \"`n\", "
+        "[System.Text.UTF8Encoding]::new($false))"
+    )
     return TaskProposal(
         task_summary=(
             "Check that Codex can write inside an isolated DevFlow worktree by creating one marker. "
@@ -46,6 +52,9 @@ def _preflight_proposal(marker_path: str, marker_contents: str) -> TaskProposal:
             order=1,
             description=(
                 f"Create {marker_path} with exactly {marker_contents!r}; make no other changes. "
+                "On Windows PowerShell, use this exact writer to preserve the trailing LF and write "
+                f"UTF-8 without a BOM: {powershell_marker_writer}. "
+                "Do not use Set-Content or Add-Content for this marker. "
                 "Do not run git status or any other Git command; the host validates the diff."
             ),
         )],

@@ -20,6 +20,23 @@ def test_preflight_and_implementation_share_the_same_adapter():
     assert preflight.implement_approved_plan is codex_cli.implement_approved_plan
 
 
+def test_preflight_proposal_requires_exact_utf8_marker_with_trailing_lf():
+    expected = f"WORDPILOT_DEVFLOW_WRITE_OK:{RUN_ID}\n"
+    proposal = preflight._preflight_proposal("marker.txt", expected)
+
+    instructions = proposal.implementation_steps[0].description
+    assert repr(expected) in instructions
+    assert "WriteAllText" in instructions
+    assert "UTF8Encoding]::new($false)" in instructions
+    assert "`n" in instructions
+    assert (
+        "[System.IO.File]::WriteAllText('marker.txt', "
+        f"'WORDPILOT_DEVFLOW_WRITE_OK:{RUN_ID}' + \"`n\", "
+        "[System.Text.UTF8Encoding]::new($false))"
+    ) in instructions
+    assert "Do not use Set-Content or Add-Content" in instructions
+
+
 def _execution(status="succeeded", *, stdout="", stderr="", message=None):
     return CodexExecutionResult(
         command_identity=["codex", "exec", "--sandbox", "workspace-write"],
@@ -121,10 +138,11 @@ def test_preflight_fails_on_policy_denial_even_when_exit_code_is_zero(monkeypatc
     [
         (f"WORDPILOT_DEVFLOW_WRITE_OK:{RUN_ID}\n", "passed"),
         (f"WORDPILOT_DEVFLOW_WRITE_OK:{RUN_ID}\r\n", "passed"),
+        (f"WORDPILOT_DEVFLOW_WRITE_OK:{RUN_ID}", "failed"),
         ("incorrect\n", "failed"),
         (f"WORDPILOT_DEVFLOW_WRITE_OK:{RUN_ID}\nextra content\n", "failed"),
     ],
-    ids=["lf", "crlf", "incorrect", "extra-content"],
+    ids=["lf", "crlf", "missing-trailing-newline", "incorrect", "extra-content"],
 )
 def test_preflight_validates_exact_marker_contents_across_windows_line_endings(
     monkeypatch, tmp_path, marker_contents, expected_status,
