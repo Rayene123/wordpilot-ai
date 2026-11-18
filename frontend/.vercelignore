@@ -1,0 +1,5 @@
+# Keep frontend deployments independent from the backend project's root ignore rules.
+.env*
+!.env.example
+node_modules/
+.next/
