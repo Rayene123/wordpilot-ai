@@ -26,12 +26,30 @@ def test_successful_inspection_and_one_replacement(make_docx, tmp_path):
     }])
 
     assert result["workflow_status"] == "completed"
+    assert result["integrity_status"] == "passed"
+    assert result["integrity_report"]["status"] == "passed"
     assert result["document_summary"]["paragraphs"][1]["text"] == "Unrelated paragraph"
     assert result["execution_results"][0]["success"] is True
     assert Document(result["output_path"]).paragraphs[1].text == "Updated paragraph"
     assert source.read_bytes() == original
     assert result["output_path"] != str(source)
     assert result["final_response"].startswith("Completed 1 document operation")
+
+
+def test_graph_integrity_failure_cannot_finalize_success(make_docx, tmp_path, monkeypatch):
+    from backend.docx_editor.integrity import IntegrityCheck, IntegrityReport
+
+    source = make_docx()
+    report = IntegrityReport(status="failed", checks=[IntegrityCheck(name="test", status="failed", details=["failure"])],
+                             unexpected_changes=[], expected_changes=[], unverified_features=[], errors=[], summary="test failure")
+    result = _invoke(build_document_graph(tmp_path, verifier=lambda *args: report), source, [{
+        "operation_type": "replace", "target_text": "Unrelated", "replacement_text": "Updated",
+    }])
+    assert result["workflow_status"] == "failed"
+    assert result["integrity_status"] == "failed"
+    assert result["output_path"] is not None
+    assert "failed" in result["final_response"].lower()
+    assert not Document(result["output_path"]).paragraphs[1].text == "Unrelated paragraph"
 
 
 def test_multiple_operations_execute_sequentially(make_docx, tmp_path):

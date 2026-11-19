@@ -1,14 +1,17 @@
-"""First executable LangGraph workflow for controlled DOCX operations."""
+"""Compiled post-approval LangGraph workflow for controlled DOCX execution."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import uuid
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 
 from langgraph.graph import END, START, StateGraph
 from pydantic import TypeAdapter
+from backend.docx_editor.integrity import IntegrityCheck, IntegrityReport, verify_document_integrity
 
 from .schemas import DocumentOperation, InsertOperation, RemoveOperation, ReplaceOperation
 from .state import DocumentAgentState
@@ -37,6 +40,14 @@ def _parse_tool_result(value: Any) -> dict[str, Any]:
     raise ValueError("Document tool returned an unsupported result format.")
 
 
+def _file_fingerprint(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source_file:
+        for chunk in iter(lambda: source_file.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _inspect_node(state: DocumentAgentState) -> dict[str, Any]:
     """Inspect the input DOCX and initialize serializable workflow fields."""
     path = state.get("document_path", "")
@@ -51,6 +62,9 @@ def _inspect_node(state: DocumentAgentState) -> dict[str, Any]:
         "output_path": None,
     }
     try:
+        if state.get("source_fingerprint"):
+            if _file_fingerprint(Path(path).resolve()) != state["source_fingerprint"]:
+                raise ValueError("Source document changed after planning.")
         tools = {item.name: item for item in create_document_tools(path)}
         result = _parse_tool_result(tools["inspect_document"].invoke({}))
     except Exception as exc:
@@ -187,7 +201,49 @@ def _route_after_validation(state: DocumentAgentState) -> Literal["execute_opera
     return "finalize" if state.get("validation_errors") else "execute_operations"
 
 
-def build_document_graph(output_directory: str | Path):
+def _route_after_execution(state: DocumentAgentState) -> Literal["verify_integrity", "finalize"]:
+    return "verify_integrity" if state.get("workflow_status") == "completed" else "finalize"
+
+
+def _verify_node(state: DocumentAgentState, verifier=verify_document_integrity) -> dict[str, Any]:
+    """Verify the generated output against the source and approved operations."""
+    output_path = state.get("output_path")
+    output_dir = Path(state["output_directory"]).resolve()
+    source = Path(state["document_path"]).resolve()
+    try:
+        output = Path(output_path).resolve() if output_path else None
+        if output is None or output == source or output.parent != output_dir or not output.is_file():
+            raise ValueError("Generated output is missing or outside the host-selected output directory.")
+        report = verifier(source, output, state["validated_operations"])
+        report = report if isinstance(report, IntegrityReport) else IntegrityReport.model_validate(report)
+        failed_checks = any(check.status == "failed" for check in report.checks)
+        partial_checks = any(check.status == "partially_verified" for check in report.checks)
+        if report.status == "passed" and (failed_checks or report.unexpected_changes or report.errors):
+            report = report.model_copy(update={"status": "failed", "summary": "Verifier reported failed checks or unexpected changes."})
+        elif report.status == "passed" and (partial_checks or report.unverified_features):
+            report = report.model_copy(update={"status": "partially_verified", "summary": "Verifier reported unverified features."})
+        elif report.status == "partially_verified" and (failed_checks or report.unexpected_changes or report.errors):
+            report = report.model_copy(update={"status": "failed", "summary": "Verifier reported failed checks or unexpected changes."})
+    except Exception as exc:
+        report = IntegrityReport(status="failed", checks=[IntegrityCheck(name="integrity_verifier", status="failed", details=[f"Integrity verification did not complete: {exc}"])], unexpected_changes=[], expected_changes=[], unverified_features=[], errors=[f"Integrity verification did not complete: {exc}"], summary=f"Integrity verification failed to complete: {exc}")
+    status = report.status
+    if status != "passed":
+        return {"integrity_report": report.model_dump(mode="json"), "integrity_status": status,
+                "workflow_status": "partial" if status == "partially_verified" else "failed",
+                "errors": list(state.get("errors", [])) + [report.summary]}
+    return {"integrity_report": report.model_dump(mode="json"), "integrity_status": status,
+            "workflow_status": "completed"}
+
+
+def _route_after_verification(state: DocumentAgentState) -> Literal["finalize", "fail"]:
+    return "finalize" if state.get("integrity_status") == "passed" else "fail"
+
+
+def _verification_failure(state: DocumentAgentState) -> dict[str, Any]:
+    return {"workflow_status": "failed"}
+
+
+def build_document_graph(output_directory: str | Path, *, verifier=verify_document_integrity):
     """Build the compiled graph using a host-controlled output directory.
 
     Invoke with a state mapping containing ``document_path``,
@@ -198,10 +254,19 @@ def build_document_graph(output_directory: str | Path):
     if not output_dir.exists() or not output_dir.is_dir():
         raise ValueError(f"Output directory must already exist: {output_dir}")
 
+    return _compile_document_graph(str(output_dir), verifier)
+
+
+@lru_cache(maxsize=8)
+def _compile_document_graph(output_directory: str, verifier):
+    """Reuse immutable compiled graphs while each invoke receives fresh state."""
+    output_dir = Path(output_directory)
     graph = StateGraph(DocumentAgentState)
     graph.add_node("inspect_document", _inspect_node)
     graph.add_node("validate_operations", _validate_node)
     graph.add_node("execute_operations", lambda state: _execute_node(state, output_dir))
+    graph.add_node("verify_integrity", lambda state: _verify_node({**state, "output_directory": str(output_dir)}, verifier))
+    graph.add_node("verification_failed", _verification_failure)
     graph.add_node("finalize", _finalize_node)
     graph.add_edge(START, "inspect_document")
     graph.add_conditional_edges(
@@ -214,6 +279,10 @@ def build_document_graph(output_directory: str | Path):
         _route_after_validation,
         {"execute_operations": "execute_operations", "finalize": "finalize"},
     )
-    graph.add_edge("execute_operations", "finalize")
+    graph.add_conditional_edges("execute_operations", _route_after_execution,
+                                {"verify_integrity": "verify_integrity", "finalize": "finalize"})
+    graph.add_conditional_edges("verify_integrity", _route_after_verification,
+                                {"finalize": "finalize", "fail": "verification_failed"})
+    graph.add_edge("verification_failed", "finalize")
     graph.add_edge("finalize", END)
     return graph.compile()

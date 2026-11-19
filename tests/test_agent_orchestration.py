@@ -296,22 +296,20 @@ def test_deterministic_execution_failure_is_returned_without_source_change(make_
     proposal = plan_document(source, "Change it", planner=MockPlanner(_replace_result()))
     calls = []
 
-    def failed_executor(state, output_directory):
-        calls.append((state, output_directory))
-        return {
-            "execution_results": [{"success": False, "error": "simulated editor failure"}],
-            "warnings": [],
-            "errors": ["Operation 1 failed: simulated editor failure"],
-            "output_path": None,
-            "workflow_status": "failed",
-        }
+    class FailedGraph:
+        def invoke(self, state):
+            calls.append(state)
+            return {"execution_results": [{"success": False, "error": "simulated editor failure"}],
+                    "warnings": [], "errors": ["Operation 1 failed: simulated editor failure"],
+                    "output_path": None, "workflow_status": "failed", "integrity_status": "not_run"}
 
-    monkeypatch.setattr(orchestration, "_execute_node", failed_executor)
+    monkeypatch.setattr(orchestration, "build_document_graph", lambda *a, **k: FailedGraph())
     result = execute_approved_proposal(proposal, approved=True, output_directory=tmp_path)
 
     assert calls
     assert result["execution_status"] == "execution_failed"
     assert result["errors"] == ["Operation 1 failed: simulated editor failure"]
+    assert calls[0]["proposed_operations"] == proposal["proposed_operations"]
     assert source.read_bytes() == original
 
 
@@ -451,14 +449,14 @@ def test_partial_editor_output_is_preserved_but_not_verified(make_docx, tmp_path
     partial_output = tmp_path / "partial.docx"
     shutil.copyfile(source, partial_output)
 
-    def partial_executor(state, output_directory):
-        return {
-            "execution_results": [{"success": True}, {"success": False}],
-            "warnings": [], "errors": ["second operation failed"],
-            "output_path": str(partial_output), "workflow_status": "partial",
-        }
+    class PartialGraph:
+        def invoke(self, state):
+            return {"execution_results": [{"success": True}, {"success": False}],
+                    "warnings": [], "errors": ["second operation failed"],
+                    "output_path": str(partial_output), "workflow_status": "partial",
+                    "integrity_status": "not_run"}
 
-    monkeypatch.setattr(orchestration, "_execute_node", partial_executor)
+    monkeypatch.setattr(orchestration, "build_document_graph", lambda *a, **k: PartialGraph())
     monkeypatch.setattr(orchestration, "verify_document_integrity", lambda *args: pytest.fail("partial output must not be verified"))
 
     result = execute_approved_proposal(proposal, approved=True, output_directory=tmp_path)

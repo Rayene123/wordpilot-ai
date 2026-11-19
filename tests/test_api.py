@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import zipfile
 
 from docx import Document
 from fastapi.testclient import TestClient
@@ -244,6 +245,75 @@ def test_download_returns_only_registered_output(monkeypatch, tmp_path):
     assert downloaded.status_code == 200
     assert downloaded.content.startswith(b"PK")
     assert client.get(f"/api/documents/{doc_id}/download", params={"download_id": "../../secret"}).status_code == 404
+
+
+def test_fastapi_approval_invokes_compiled_graph_and_downloads_verified_output(monkeypatch, tmp_path):
+    import backend.agent.orchestration as orchestration
+
+    monkeypatch.setattr(api, "UPLOAD_DIR", tmp_path / "uploads")
+    monkeypatch.setattr(api, "OUTPUT_DIR", tmp_path / "outputs")
+    real_plan = orchestration.plan_document
+
+    class Provider:
+        def generate(self, messages, schema):
+            return {"status": "proposed", "message": "Replace Draft.", "operations": [{
+                "operation_type": "replace", "target_text": "Draft", "replacement_text": "Final",
+            }]}
+
+    monkeypatch.setattr(api, "plan_document", lambda path, instruction: real_plan(path, instruction, provider=Provider()))
+    real_builder = orchestration.build_document_graph
+    calls = []
+
+    def spy_builder(directory, **kwargs):
+        graph = real_builder(directory, **kwargs)
+        class SpyGraph:
+            def invoke(self, state):
+                calls.append(state.copy())
+                return graph.invoke(state)
+        return SpyGraph()
+
+    monkeypatch.setattr(orchestration, "build_document_graph", spy_builder)
+    client = _client()
+    document_id = _upload(client).json()["document_id"]
+    planned = client.post(f"/api/documents/{document_id}/plan", json={"instruction": "Replace Draft"}).json()
+    token = planned.pop("proposal_token")
+    response = client.post(f"/api/documents/{document_id}/approve", json={
+        "proposal_token": token, "proposal": planned, "approved": True,
+    })
+    assert response.status_code == 200
+    result = response.json()
+    assert calls and calls[0]["proposed_operations"] == planned["proposed_operations"]
+    assert result["execution_status"] == "completed_verified"
+    assert result["integrity_status"] == "passed"
+    assert result["download_id"]
+    downloaded = client.get(f"/api/documents/{document_id}/download", params={"download_id": result["download_id"]})
+    assert downloaded.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(downloaded.content)) as package:
+        assert b"Final" in package.read("word/document.xml")
+
+
+def test_api_does_not_register_partially_verified_output(monkeypatch, tmp_path):
+    monkeypatch.setattr(api, "UPLOAD_DIR", tmp_path / "uploads")
+    monkeypatch.setattr(api, "OUTPUT_DIR", tmp_path / "outputs")
+    client = _client()
+    document_id = _upload(client).json()["document_id"]
+    output_dir = api._output_dir()
+    output = output_dir / "diagnostic.docx"
+    Document().save(output)
+    proposal = {"planning_status": "awaiting_approval", "document_path": "hidden",
+                "proposal_digest": "opaque-token-which-is-long-enough-789", "proposed_operations": []}
+    monkeypatch.setattr(api, "plan_document", lambda *a: proposal.copy())
+    planned = client.post(f"/api/documents/{document_id}/plan", json={"instruction": "edit"}).json()
+    token = planned.pop("proposal_token")
+    monkeypatch.setattr(api, "execute_approved_proposal", lambda *a, **k: {
+        "execution_status": "completed_partially_verified", "integrity_status": "partially_verified",
+        "approval_status": "approved", "output_path": str(output),
+    })
+    response = client.post(f"/api/documents/{document_id}/approve", json={
+        "proposal_token": token, "proposal": planned, "approved": True,
+    })
+    assert response.status_code == 200
+    assert response.json()["download_id"] is None
 
 
 def test_unknown_and_path_traversal_ids_are_404():

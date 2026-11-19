@@ -198,7 +198,8 @@ def approve(document_id: str, request: ApprovalRequest) -> dict[str, Any]:
         proposal = entry["proposal"]
     result = execute_approved_proposal(proposal, approved=request.approved, output_directory=_output_dir())
     output_id = None
-    if result.get("output_path"):
+    if (result.get("execution_status") == "completed_verified"
+            and result.get("integrity_status") == "passed" and result.get("output_path")):
         output = Path(result["output_path"]).resolve()
         if output.parent == OUTPUT_DIR.resolve() and output.is_file():
             output_id = str(uuid.uuid4())

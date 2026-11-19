@@ -1,8 +1,6 @@
 # WordPilot architecture and compliance evidence
 
-## Audit basis and result
-
-**CASE STUDY RESULT: REQUIREMENTS MET.**
+## Audit basis
 
 The behavioral requirement source in this repository is [`therapist_session_notes_instruction.txt`](../therapist_session_notes_instruction.txt), applied to [`therapist_session_notes.docx`](../therapist_session_notes.docx). It asks for one paragraph to be inserted after the paragraph containing a specified sentence, that sentence to be replaced, and all other content and formatting to be preserved. The document is a fictional software demonstration fixture; it is not a clinical template.
 
@@ -20,9 +18,9 @@ The behavioral requirement source in this repository is [`therapist_session_note
 | `uploads/`, `generated-documents/` | Local runtime data directories; their contents are not committed sample deliverables. |
 | Root/frontend manifests and deployment files | Python dependencies, Next.js package lock/configuration, Vercel settings, and environment examples. |
 
-The repository contains the requested editing workflow, synthetic regression coverage, and a completed website execution on the supplied sample. Two requested operations completed. The website displayed **“Integrity verified — passed”**; all supported integrity checks passed, with no unexpected differences or unverified features reported. The project author also manually inspected the generated output. The detailed verifier scope and broader technical limits are separated below.
+The sample execution evidence is retained below as historical evidence. Regression tests cover the approved FastAPI-to-graph path and graph verification routing; the test list identifies those tests without implying they were run for every documentation update.
 
-In the compliance matrix, **VERIFIED** means the supplied implementation and execution evidence establish the stated case-study requirement. General OOXML and renderer limitations are documented separately and do not downgrade the demonstrated sample result.
+In the compliance matrix, **VERIFIED** refers to the cited implementation and execution evidence. General OOXML and renderer limitations are documented separately.
 
 ## Runtime architecture
 
@@ -30,7 +28,7 @@ In the compliance matrix, **VERIFIED** means the supplied implementation and exe
 
 ![High-level WordPilot system architecture](images/wordpilot-system-architecture.svg)
 
-*Figure 1. WordPilot runtime components, approval boundary, and verified DOCX delivery. The API uses the planner and deterministic executor directly; the separately compiled LangGraph workflow is shown as an alternate operation path and is not called by the HTTP API.*
+*Figure 1. WordPilot runtime components, approval boundary, and verified DOCX delivery. The API keeps planning and approval separate, then invokes LangGraph for approved execution.*
 
 The delivered product runtime is the FastAPI application in [`backend/api.py`](../backend/api.py), the planner and orchestration in [`backend/agent/`](../backend/agent/), the DOCX inspection/editor/integrity modules in [`backend/docx_editor/`](../backend/docx_editor/), and the Next.js client in [`frontend/src/`](../frontend/src/). The browser sends instructions and displays proposals/results; document parsing and edits stay on the backend. The API chooses upload and output paths, keeps internal paths out of public proposals, and exposes downloads only through registered IDs.
 
@@ -39,8 +37,9 @@ The runtime sequence is:
 1. `POST /api/documents/upload` accepts `.docx` up to 15 MiB, checks ZIP package markers and CRC, opens it with `python-docx`, then stores it under a host-generated ID.
 2. `POST /api/documents/{id}/plan` inspects the source and passes an ordered, compact document context plus the instruction to the selected provider. The LLM returns a `PlanningResult`; local Pydantic validation and exact-target checks reject malformed, missing, or ambiguous operations. Planning makes no edits.
 3. The API retains the proposal and one-time token in process memory. The browser displays the exact proposed operations for a human decision.
-4. `POST /api/documents/{id}/approve` checks the registered token, unchanged proposal, and source fingerprint; validates operations again; then calls the deterministic executor. It creates a unique output under `generated-documents/`, never overwriting the source.
-5. The approved execution path runs integrity verification. A passing result can be downloaded through the registered download ID; partial or failed verification is surfaced as such.
+4. `POST /api/documents/{id}/approve` checks the registered token, unchanged proposal, and source fingerprint, then consumes the token before invoking `execute_approved_proposal()`.
+5. `execute_approved_proposal()` invokes the compiled `build_document_graph()` workflow with the server-owned source path, approved operations, and source fingerprint. The graph re-inspects the source, validates all operations, runs the fixed DOCX tools into a unique output, verifies integrity, and finalizes success only after a passing report.
+6. The API registers a download ID only for `completed_verified` results with a passing integrity report. Rejected proposals never invoke the graph. Partial, failed, or unverified outputs are not downloadable.
 
 This is not a streaming API and it does not render an editable/live Word preview. Proposal and download state is process-local; uploaded and generated files are local. Multi-step requests require the same live process, and deployment to ephemeral/serverless storage is not reliable without durable shared storage and state.
 
@@ -56,12 +55,14 @@ This is not a streaming API and it does not render an editable/live Word preview
 |---|---|
 | `inspect_document` | Calls the bound inspection tool and initializes serializable result fields. |
 | `validate_operations` | Validates the complete proposed operation list with a discriminated Pydantic union before any edit. |
-| `execute_operations` | Executes validated operations sequentially using the fixed tool map; stops on first failure and preserves any partial output. |
-| `finalize` | Builds a response from the resulting status, errors, and warnings. |
+| `execute_operations` | Executes validated operations sequentially using the fixed tool map; stops on first failure. |
+| `verify_integrity` | Checks the output against the original and exact approved operations, and rejects inconsistent verifier reports. |
+| `verification_failed` | Routes failed or partially verified results away from successful finalization. |
+| `finalize` | Builds the final response after success or a controlled failure route. |
 
-Edges: `START → inspect_document`; inspection routes to `validate_operations` or `finalize`; validation routes to `execute_operations` or `finalize`; execution goes to `finalize → END`. The output directory is host-selected and must already exist. State in [`backend/agent/state.py`](../backend/agent/state.py) uses paths and JSON-friendly values rather than live DOCX objects.
+Edges: `START → inspect_document`; inspection routes to validation or finalization; validation routes to execution or finalization; successful execution routes to verification; verification routes to finalization only when passed, otherwise through `verification_failed`; then `END`. The output directory is host-selected and must already exist. Compiled graphs are reused by output-directory/verifier configuration, while each invocation receives independent JSON-friendly state.
 
-Important boundary: this compiled graph accepts operation dictionaries supplied by its caller. The LLM planner is a separate path, and the HTTP API joins planning/approval to the same deterministic `_execute_node` executor without invoking `build_document_graph`. Do not describe the API as one LLM-tool-calling LangGraph agent loop.
+The planner remains outside the post-approval graph: it proposes typed edits but does not execute tools. The API approval boundary remains responsible for exact proposal checks and one-time token consumption before the graph can run. The graph accepts operation dictionaries only after that boundary and validates them again before editing; the graph itself does not provide a public approval mechanism.
 
 ## Custom document tools and operation schemas
 
@@ -153,7 +154,7 @@ The test functions below are evidence of regression scenarios in source; this do
 | Area | Test files and representative exact tests |
 |---|---|
 | Tool/schema boundary | [`tests/test_agent_foundation.py`](../tests/test_agent_foundation.py): `test_tools_are_fixed_and_do_not_expose_paths`, `test_tool_argument_validation_rejects_empty_target`, `test_tool_adapters_call_existing_document_operations`, `test_tool_rejects_unrecognized_arguments`, `test_agent_state_is_json_serializable`. |
-| LangGraph execution | [`tests/test_agent_graph.py`](../tests/test_agent_graph.py): `test_successful_inspection_and_one_replacement`, `test_multiple_operations_execute_sequentially`, `test_invalid_operation_list_prevents_all_edits`, `test_middle_failure_returns_partial_output_and_stops`, `test_graph_state_is_json_serializable`. |
+| LangGraph execution | [`tests/test_agent_graph.py`](../tests/test_agent_graph.py): inspect, validate, deterministic execution, integrity verification failure routing, sequential operations, and serializable state. [`tests/test_api.py`](../tests/test_api.py) spies on the real compiled graph invocation through FastAPI approval and checks the successful download gate. |
 | Planning and approval | [`tests/test_agent_planner.py`](../tests/test_agent_planner.py): `test_planner_returns_valid_operations`, `test_repeated_target_is_converted_to_host_clarification`, `test_invalid_structured_or_malformed_response_is_rejected`, `test_provider_selection_and_model_configuration`; [`tests/test_agent_orchestration.py`](../tests/test_agent_orchestration.py): `test_approval_executes_and_preserves_original`, `test_rejection_does_not_create_output`, `test_modified_security_relevant_proposal_fields_are_rejected`, `test_partial_verification_returns_completed_partially_verified`. |
 | Editing and package preservation | [`tests/test_docx_editor.py`](../tests/test_docx_editor.py): `test_cross_run_preserves_formatting_and_surrounding_text`, `test_table_cell_replacement_preserves_other_content`, `test_image_and_structure_survive_replacement`, `test_package_parts_preserved_or_modified_as_expected`, `test_insert_after_preserves_original_paragraph`, `test_remove_paragraph_and_preserve_neighbors_and_image`. |
 | Integrity verifier | [`tests/test_docx_integrity.py`](../tests/test_docx_integrity.py): `test_approved_replacement_across_adjacent_runs_preserves_formatting`, `test_unapproved_formatting_change_fails`, `test_inline_image_loss_fails`, `test_changed_image_relationship_is_detected`, `test_changed_unrelated_package_part_fails`, `test_harmless_zip_recompression_and_entry_order_pass`, `test_image_layout_scope_is_reported_as_partial`, `test_nested_table_cells_are_compared`, `test_unchanged_headers_and_footers_do_not_downgrade_body_edit`. |

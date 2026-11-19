@@ -12,7 +12,7 @@ See the [architecture report](docs/WORDPILOT_ARCHITECTURE.md) for the execution 
 
 ## Case Study Compliance
 
-**CASE STUDY RESULT: REQUIREMENTS MET.** WordPilot meets the requirements of the supplied technical case study. It uses Python and LangGraph-based orchestration for document editing; supports insertion, replacement, and removal through custom document-editing tools; preserves unaffected supported DOCX content and formatting; validates structured operations and requires human approval before execution; and verifies document integrity after editing. The project includes a working sample input, instruction, and generated output. See [the architecture report](docs/WORDPILOT_ARCHITECTURE.md) for technical evidence and [functional editing test coverage](docs/WORDPILOT_ARCHITECTURE.md#functional-editing-test-coverage).
+The approved FastAPI execution path invokes the compiled LangGraph workflow. Its nodes inspect and validate the approved request, run the fixed Python DOCX tools, verify output integrity, and finalize the result. Downloads are registered only after integrity verification passes. See [the architecture report](docs/WORDPILOT_ARCHITECTURE.md) for implementation details, test coverage, and the supported DOCX limits.
 
 ## Run locally
 

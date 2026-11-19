@@ -37,3 +37,5 @@ class DocumentAgentState(TypedDict):
     execution_status: NotRequired[ExecutionStatus]
     integrity_status: NotRequired[IntegrityStatus]
     integrity_report: NotRequired[dict[str, Any] | None]
+    source_fingerprint: NotRequired[str]
+    output_directory: NotRequired[str]

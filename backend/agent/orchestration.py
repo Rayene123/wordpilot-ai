@@ -16,11 +16,11 @@ from typing import Any, Literal, Mapping
 
 from pydantic import TypeAdapter, ValidationError
 
-from backend.docx_editor.integrity import IntegrityCheck, IntegrityReport, verify_document_integrity
+from backend.docx_editor.integrity import verify_document_integrity
 
 from backend.docx_editor.inspection import inspect_document_with_planner_context
 
-from .graph import _execute_node
+from .graph import build_document_graph
 from .planner import OperationPlanner, PlanningContextTooLarge, PlanningModel
 from .schemas import DocumentOperation
 
@@ -197,113 +197,49 @@ def execute_approved_proposal(
             return _execution_failure(result, "Proposal token is unknown or has already been used.")
 
     execution_state = {
-        "document_path": str(source),
-        "validated_operations": approved_ops,
-        "errors": [],
-        "warnings": [],
+        "document_path": str(source), "user_instruction": str(proposal.get("user_instruction", "")),
+        "proposed_operations": approved_ops, "source_fingerprint": proposal.get("source_fingerprint"),
     }
     try:
-        execution = _execute_node(execution_state, output_dir)
+        execution = build_document_graph(output_dir, verifier=verify_document_integrity).invoke(execution_state)
     except Exception as exc:
-        result.update({
-            "approval_status": "approved",
-            "execution_status": "execution_failed",
-            "integrity_status": "not_run",
-            "errors": [f"Document execution failed: {exc}"],
-            "final_response": f"Document execution failed. {exc}",
-        })
+        _logger.error("Approved document graph failed: type=%s message=%s", type(exc).__name__, _safe_error_message(exc))
+        result.update({"approval_status": "approved", "execution_status": "execution_failed", "integrity_status": "not_run",
+                       "errors": [f"Document execution failed ({type(exc).__name__})."],
+                       "final_response": "Document execution failed. No verified output is available."})
         return result
-    status = execution["workflow_status"]
-    result.update({
-        "approval_status": "approved",
-        "approved_operations": approved_ops,
-        "execution_results": execution["execution_results"],
-        "warnings": execution["warnings"],
-        "errors": execution["errors"],
-        "output_path": execution["output_path"],
-    })
-    if status != "completed":
-        result.update({
-            "execution_status": "execution_failed",
-            "integrity_status": "not_run",
-            "final_response": _execution_message(status, execution),
-        })
-        if execution["output_path"]:
-            result["final_response"] += f" Partial output is preserved but unverified: {execution['output_path']}"
+    result.update({"approval_status": "approved", "approved_operations": approved_ops,
+                   "validated_operations": execution.get("validated_operations", []),
+                   "execution_results": execution.get("execution_results", []), "warnings": execution.get("warnings", []),
+                   "errors": execution.get("errors", []), "integrity_report": execution.get("integrity_report"),
+                   "integrity_status": execution.get("integrity_status", "not_run"),
+                   "output_path": execution.get("output_path")})
+    if execution.get("workflow_status") != "completed" or execution.get("integrity_status") != "passed":
+        if execution.get("integrity_status") == "partially_verified":
+            report = execution.get("integrity_report") or {}
+            limits = " ".join(report.get("unverified_features", [])) or report.get("summary", "Some features were not fully checked.")
+            result.update({"execution_status": "completed_partially_verified",
+                           "final_response": f"Document execution completed with partial integrity verification. {limits} No downloadable output was created."})
+            return result
+        result.update({"execution_status": "integrity_failed" if execution.get("integrity_status") == "failed" else "execution_failed",
+                       "final_response": "Document execution failed or remains unverified. No downloadable output was created."})
         return result
-
     output_path = execution.get("output_path")
     try:
-        if not output_path:
-            raise ValueError("The editor reported completion without an output file.")
-        output = Path(output_path).expanduser().resolve()
-        if output == source:
-            raise ValueError("The editor output path resolves to the original source document.")
-        if output.parent != output_dir or not output.is_file():
-            raise ValueError("The editor output is missing or outside the host-selected output directory.")
+        output = Path(output_path).resolve() if output_path else None
+        if output is None or output == source or output.parent != output_dir or not output.is_file():
+            raise ValueError("The graph did not return a valid host-owned output file.")
     except (OSError, TypeError, ValueError) as exc:
-        result.update({
-            "execution_status": "execution_failed",
-            "integrity_status": "not_run",
-            "errors": [f"Document output validation failed: {exc}"],
-            "final_response": f"Document execution failed. {exc}",
-        })
+        if output_path:
+            try: Path(output_path).unlink(missing_ok=True)
+            except OSError: pass
+        result.update({"execution_status": "execution_failed", "integrity_status": "not_run",
+                       "errors": [f"Document output validation failed: {exc}"],
+                       "final_response": "Document execution failed. No downloadable output was created."})
         return result
-
-    try:
-        report = verify_document_integrity(source, output, approved_ops)
-        report = report if isinstance(report, IntegrityReport) else IntegrityReport.model_validate(report)
-        failed_checks = any(check.status == "failed" for check in report.checks)
-        partial_checks = any(check.status == "partially_verified" for check in report.checks)
-        if report.status == "passed" and (failed_checks or report.unexpected_changes or report.errors):
-            report = report.model_copy(update={
-                "status": "failed",
-                "summary": "Verifier returned passed with failed checks or unexpected changes; treated as failed.",
-            })
-        elif report.status == "passed" and (partial_checks or report.unverified_features):
-            report = report.model_copy(update={
-                "status": "partially_verified",
-                "summary": "Verifier reported unverified features; treated as partially verified.",
-            })
-        elif report.status == "partially_verified" and (failed_checks or report.unexpected_changes or report.errors):
-            report = report.model_copy(update={
-                "status": "failed",
-                "summary": "Verifier reported unexpected changes or failed checks; treated as failed.",
-            })
-    except Exception as exc:
-        report = IntegrityReport(
-            status="failed",
-            checks=[IntegrityCheck(
-                name="integrity_verifier",
-                status="failed",
-                details=[f"Integrity verification did not complete: {exc}"],
-            )],
-            unexpected_changes=[],
-            expected_changes=[],
-            unverified_features=[],
-            errors=[f"Integrity verification did not complete: {exc}"],
-            summary=f"Integrity verification failed to complete: {exc}",
-        )
-    result["integrity_report"] = report.model_dump(mode="json")
-    result["integrity_status"] = report.status
-    if report.status == "passed":
-        result["execution_status"] = "completed_verified"
-        result["final_response"] = f"Completed and verified {len(execution['execution_results'])} document operation(s). Output: {result['output_path']}"
-    elif report.status == "partially_verified":
-        result["execution_status"] = "completed_partially_verified"
-        reasons = " ".join(report.unverified_features)
-        result["final_response"] = (
-            f"Completed with partial integrity verification. Output: {result['output_path']}. "
-            f"Not fully checked: {reasons or report.summary}"
-        )
-    else:
-        result["execution_status"] = "integrity_failed"
-        result["final_response"] = (
-            f"Integrity verification failed. Output is preserved for diagnosis and is unverified: {result['output_path']}. "
-            f"{report.summary}"
-        )
+    result.update({"execution_status": "completed_verified", "output_path": str(output),
+                   "final_response": f"Completed and verified {len(result['execution_results'])} document operation(s). Output: {output}"})
     return result
-
 
 def _planning_result(
     status: Literal["awaiting_approval", "needs_clarification", "unsupported"],
