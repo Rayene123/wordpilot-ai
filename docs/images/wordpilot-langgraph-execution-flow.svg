@@ -175,58 +175,47 @@
 
   <!-- ============ Section B ============ -->
   <rect x="20" y="836" width="1360" height="250" rx="10" fill="#f9fafb" stroke="#9ca3af" stroke-width="1.4" stroke-dasharray="7 4"/>
-  <text x="40" y="859" class="secg">B · COMPILED LANGGRAPH GRAPH   build_document_graph(output_dir)   (implemented and tested, not invoked by the FastAPI endpoints)</text>
-  <text x="40" y="878" class="sub">It takes caller-supplied proposed_operations and has no LLM-planning, approval or integrity node. DocumentAgentState declares fields for those, but no graph node sets them.</text>
+  <text x="40" y="859" class="secg">B · COMPILED LANGGRAPH GRAPH   build_document_graph(output_dir)   (invoked by execute_approved_proposal after approval)</text>
+  <text x="40" y="878" class="sub">The LLM planner remains outside this post-approval graph. The graph receives the approved operations and controls editing, integrity verification, and finalization.</text>
 
-  <rect x="48" y="945" width="62" height="30" rx="15" fill="#e5e7eb" stroke="#6b7280" stroke-width="1.2"/>
-  <text x="79" y="964" text-anchor="middle" class="b mono" style="font-weight:700">START</text>
-  <path d="M110 960 H136" class="flow"/>
+  <rect x="62" y="930" width="62" height="30" rx="15" fill="#e5e7eb" stroke="#6b7280" stroke-width="1.2"/>
+  <text x="93" y="949" text-anchor="middle" class="b mono" style="font-weight:700">START</text>
+  <path d="M124 945 H145" class="flow"/>
 
-  <rect x="138" y="915" width="210" height="90" rx="8" class="proc"/>
-  <text x="243" y="937" text-anchor="middle" class="t mono" style="font-size:12px">inspect_document</text>
-  <text x="243" y="961" text-anchor="middle" class="b">Inspects the DOCX with the bound</text>
-  <text x="243" y="977" text-anchor="middle" class="b">tool and initializes state</text>
-  <path d="M348 960 H370" class="flow"/>
+  <rect x="148" y="905" width="205" height="88" rx="8" class="proc"/>
+  <text x="250" y="930" text-anchor="middle" class="t mono" style="font-size:12px">inspect_document</text>
+  <text x="250" y="953" text-anchor="middle" class="b">Inspects source and checks</text>
+  <text x="250" y="970" text-anchor="middle" class="b">planning fingerprint</text>
+  <path d="M353 949 H375" class="flow"/>
 
-  <path d="M372 960 L412 924 L452 960 L412 996 z" class="dec"/>
-  <text x="412" y="964" text-anchor="middle" class="b" style="font-weight:600">ok?</text>
-  <path d="M452 960 H474" class="flow"/>
+  <rect x="378" y="905" width="205" height="88" rx="8" class="proc"/>
+  <text x="480" y="930" text-anchor="middle" class="t mono" style="font-size:12px">validate_operations</text>
+  <text x="480" y="953" text-anchor="middle" class="b">Validates all approved edits</text>
+  <text x="480" y="970" text-anchor="middle" class="b">before modification</text>
+  <path d="M583 949 H605" class="flow"/>
 
-  <rect x="476" y="915" width="210" height="90" rx="8" class="proc"/>
-  <text x="581" y="937" text-anchor="middle" class="t mono" style="font-size:12px">validate_operations</text>
-  <text x="581" y="961" text-anchor="middle" class="b">Validates the whole operation list</text>
-  <text x="581" y="977" text-anchor="middle" class="b">(Pydantic union) before any edit</text>
-  <path d="M686 960 H708" class="flow"/>
+  <rect x="608" y="905" width="205" height="88" rx="8" class="proc"/>
+  <text x="710" y="930" text-anchor="middle" class="t mono" style="font-size:12px">execute_operations</text>
+  <text x="710" y="953" text-anchor="middle" class="b">Fixed Python DOCX tools;</text>
+  <text x="710" y="970" text-anchor="middle" class="b">unique output, stop on failure</text>
+  <path d="M813 949 H835" class="flow"/>
 
-  <path d="M710 960 L750 924 L790 960 L750 996 z" class="dec"/>
-  <text x="750" y="964" text-anchor="middle" class="b" style="font-weight:600">valid?</text>
-  <path d="M790 960 H812" class="flow"/>
+  <rect x="838" y="905" width="205" height="88" rx="8" class="proc"/>
+  <text x="940" y="930" text-anchor="middle" class="t mono" style="font-size:12px">verify_integrity</text>
+  <text x="940" y="953" text-anchor="middle" class="b">Compares output with source</text>
+  <text x="940" y="970" text-anchor="middle" class="b">and approved changes</text>
+  <path d="M1043 949 H1065" class="flow"/>
 
-  <rect x="814" y="915" width="210" height="90" rx="8" class="proc"/>
-  <text x="919" y="935" text-anchor="middle" class="t mono" style="font-size:12px">execute_operations</text>
-  <text x="919" y="956" text-anchor="middle" class="b">Runs operations in order to a unique</text>
-  <text x="919" y="971" text-anchor="middle" class="b">output; stops on the first failure</text>
-  <rect x="854" y="979" width="130" height="19" rx="9.5" fill="#eff6ff" stroke="#2563eb" stroke-width="1.2"/>
-  <text x="919" y="992" text-anchor="middle" class="pill mono">_execute_node</text>
-  <path d="M1024 960 H1052" class="flow"/>
+  <rect x="1068" y="905" width="170" height="88" rx="8" class="proc"/>
+  <text x="1153" y="930" text-anchor="middle" class="t mono" style="font-size:12px">finalize</text>
+  <text x="1153" y="953" text-anchor="middle" class="b">Success only if checks</text>
+  <text x="1153" y="970" text-anchor="middle" class="b">pass; otherwise failure</text>
+  <path d="M1238 949 H1262" class="flow"/>
 
-  <rect x="1054" y="915" width="180" height="90" rx="8" class="proc"/>
-  <text x="1144" y="937" text-anchor="middle" class="t mono" style="font-size:12px">finalize</text>
-  <text x="1144" y="961" text-anchor="middle" class="b">Builds final_response from</text>
-  <text x="1144" y="977" text-anchor="middle" class="b">status, errors and warnings</text>
-  <path d="M1234 960 H1262" class="flow"/>
+  <rect x="1264" y="930" width="62" height="30" rx="15" fill="#e5e7eb" stroke="#6b7280" stroke-width="1.2"/>
+  <text x="1295" y="949" text-anchor="middle" class="b mono" style="font-weight:700">END</text>
 
-  <rect x="1264" y="945" width="62" height="30" rx="15" fill="#e5e7eb" stroke="#6b7280" stroke-width="1.2"/>
-  <text x="1295" y="964" text-anchor="middle" class="b mono" style="font-weight:700">END</text>
-
-  <!-- failure bus to finalize -->
-  <path d="M412 996 V1040 H1144 V1007" class="flowg"/>
-  <path d="M750 996 V1040" fill="none" stroke="#6b7280" stroke-width="1.5" stroke-dasharray="5 3"/>
-  <text x="422" y="1018" class="lab">no</text>
-  <text x="760" y="1018" class="lab">no</text>
-  <text x="780" y="1062" text-anchor="middle" class="lab">A failed inspection or invalid operations skip execution</text>
-  <text x="780" y="1076" text-anchor="middle" class="lab">and go straight to finalize.</text>
-
-  <!-- footer note -->
-  <text x="40" y="1108" class="sub">The pill marks the one function shared by both paths. The API reaches it through orchestration.py, not through the compiled graph. Status names are the values returned by orchestration.py.</text>
+  <rect x="354" y="1017" width="690" height="38" rx="8" class="stop"/>
+  <text x="699" y="1041" text-anchor="middle" class="b">Conditional failure routes skip later work or successful finalization; unverified output gets no download ID.</text>
+  <text x="40" y="1108" class="sub">Compiled graphs are reused by host output directory; each invoke carries isolated request state. The API registers downloads only for passed integrity verification.</text>
 </svg>
